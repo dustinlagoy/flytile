@@ -1,8 +1,12 @@
+use crate::tile;
+use std::env;
 use std::fs;
 use std::io;
 use std::io::Cursor;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process;
+use std::time;
 extern crate reqwest;
 
 // const URL: &'static str = "https://srtm.csi.cgiar.org/wp-content/uploads/files/srtm_5x5/TIFF/srtm_{i_lon:02d}_{i_lat:02d}.zip";
@@ -21,15 +25,33 @@ extern crate reqwest;
 //                 with open(out_name, "wb") as out_file:
 //                     out_file.write(memory_file.read())
 
-pub fn tile(latitude: f32, longitude: f32) -> (i32, i32) {
+pub fn srtm_tile(point: tile::Point) -> (i32, i32) {
     // lat = 60 - 5 * (index - 1)
     // lon = -180 + 5 * (index - 1)
-    let i_lat: i32 = ((60.0 - latitude) / 5.0) as i32 + 1;
-    let i_lon: i32 = ((180.0 + longitude) / 5.0) as i32 + 1;
-    return (i_lat, i_lon);
+    let i_lon: i32 = ((180.0 + point.longitude) / 5.0) as i32 + 1;
+    let i_lat: i32 = ((60.0 - point.latitude) / 5.0) as i32 + 1;
+    return (i_lon, i_lat);
 }
 
-pub fn download(i_lat: i32, i_lon: i32) -> Option<PathBuf> {
+pub fn retrieve_all(bounds: tile::Bounds) -> Option<PathBuf> {
+    let (nw_lon, nw_lat) = srtm_tile(bounds.north_west);
+    let (ne_lon, ne_lat) = srtm_tile(bounds.north_east);
+    let (sw_lon, sw_lat) = srtm_tile(bounds.south_west);
+    let (se_lon, se_lat) = srtm_tile(bounds.south_east);
+    let min_lon = nw_lon.min(sw_lon);
+    let min_lat = sw_lat.min(se_lat);
+    let max_lon = ne_lon.max(se_lon);
+    let max_lat = nw_lat.max(ne_lat);
+    let mut files = vec![];
+    for i in min_lon..max_lon + 1 {
+        for j in min_lat..max_lat + 1 {
+            files.push(download(i, j)?);
+        }
+    }
+    return make_vrt(&files);
+}
+
+pub fn download(i_lon: i32, i_lat: i32) -> Option<PathBuf> {
     let url = format!(
         "https://srtm.csi.cgiar.org/wp-content/uploads/files/srtm_5x5/TIFF/srtm_{i_lon:02}_{i_lat:02}.zip",
         i_lon=i_lon,
@@ -38,7 +60,11 @@ pub fn download(i_lat: i32, i_lon: i32) -> Option<PathBuf> {
     let output = Path::new("/tmp").join(format!("{}_{}.zip", i_lon, i_lat));
     let mut file = fs::File::create(&output).ok()?;
     println!("downloading {}", url);
-    let response = reqwest::blocking::get(url).ok()?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(time::Duration::from_secs(300))
+        .build()
+        .ok()?;
+    let response = client.get(url).send().ok()?;
     response.error_for_status_ref().ok()?;
     let mut content = Cursor::new(response.bytes().ok()?);
     io::copy(&mut content, &mut file).ok()?;
@@ -58,13 +84,30 @@ fn extract(path: PathBuf) {
     }
 }
 
+fn make_vrt(paths: &Vec<PathBuf>) -> Option<PathBuf> {
+    let output = env::temp_dir().join("tmp.vrt");
+    let result = process::Command::new("gdalbuildvrt")
+        .arg(&output)
+        .args(paths)
+        .output()
+        .unwrap();
+    if !result.status.success() {
+        println!("failed to make slope");
+        return None;
+    }
+    return Some(output);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_download() {
-        let (i_lat, i_lon) = tile(50.0, -120.0);
+        let (i_lat, i_lon) = srtm_tile(tile::Point {
+            longitude: -120.0,
+            latitude: 50.0,
+        });
         let path = download(i_lat, i_lon).unwrap();
         assert_eq!(path.to_str().unwrap(), "/tmp/13_3.zip");
         extract(path);

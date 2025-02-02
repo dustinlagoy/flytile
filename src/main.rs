@@ -2,6 +2,8 @@
 extern crate rocket;
 use rocket::fs::NamedFile;
 use std::path;
+#[macro_use]
+mod approx;
 mod slope;
 mod srtm;
 mod tile;

@@ -25,7 +25,7 @@ extern crate reqwest;
 //                 with open(out_name, "wb") as out_file:
 //                     out_file.write(memory_file.read())
 
-pub fn srtm_tile(point: tile::Point) -> (i32, i32) {
+pub fn srtm_tile(point: tile::GeoPoint) -> (i32, i32) {
     // lat = 60 - 5 * (index - 1)
     // lon = -180 + 5 * (index - 1)
     let i_lon: i32 = ((180.0 + point.longitude) / 5.0) as i32 + 1;
@@ -51,13 +51,31 @@ pub fn retrieve_all(bounds: tile::Bounds) -> Option<PathBuf> {
     return make_vrt(&files);
 }
 
+pub fn get(point: tile::GeoPoint) -> Option<PathBuf> {
+    let (i_lon, i_lat) = srtm_tile(point);
+    let cache = env::var("FLYTILE_CACHE_DIR").unwrap_or("/tmp".into());
+    let output = Path::new(&cache)
+        .join("srtm")
+        .join(format!("srtm_{:02}_{:02}.tif", i_lon, i_lat));
+    if !output.exists() {
+        extract(download(i_lon, i_lat)?);
+    }
+    if output.exists() {
+        return Some(output);
+    }
+    None
+}
+
 pub fn download(i_lon: i32, i_lat: i32) -> Option<PathBuf> {
     let url = format!(
         "https://srtm.csi.cgiar.org/wp-content/uploads/files/srtm_5x5/TIFF/srtm_{i_lon:02}_{i_lat:02}.zip",
         i_lon=i_lon,
         i_lat=i_lat
     );
-    let output = Path::new("/tmp").join(format!("{}_{}.zip", i_lon, i_lat));
+    let cache = env::var("FLYTILE_CACHE_DIR").unwrap_or("/tmp".into());
+    let output = Path::new(&cache)
+        .join("srtm")
+        .join(format!("{}_{}.zip", i_lon, i_lat));
     let mut file = fs::File::create(&output).ok()?;
     println!("downloading {}", url);
     let client = reqwest::blocking::Client::builder()
@@ -104,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_download() {
-        let (i_lat, i_lon) = srtm_tile(tile::Point {
+        let (i_lat, i_lon) = srtm_tile(tile::GeoPoint {
             longitude: -120.0,
             latitude: 50.0,
         });

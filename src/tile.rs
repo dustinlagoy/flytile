@@ -2,71 +2,77 @@ use crate::approx;
 use std::path;
 use std::process;
 
+const XRANGE: f64 = 20037508.34;
+const YRANGE: f64 = 20048966.1;
+
+#[derive(Debug)]
 pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug)]
+pub struct GeoPoint {
     pub longitude: f64,
     pub latitude: f64,
 }
 
+#[derive(Debug)]
 pub struct Bounds {
-    pub north_west: Point,
-    pub north_east: Point,
-    pub south_west: Point,
-    pub south_east: Point,
+    pub north_west: GeoPoint,
+    pub north_east: GeoPoint,
+    pub south_west: GeoPoint,
+    pub south_east: GeoPoint,
 }
 
 pub fn tile_bounds(zoom: u8, x: u32, y: u32) -> Bounds {
-    let xf = x as f64;
-    let yf = y as f64;
     return Bounds {
-        north_west: to_geodetic(zoom, xf, yf),
-        north_east: to_geodetic(zoom, xf + 1.0, yf),
-        south_west: to_geodetic(zoom, xf, yf + 1.0),
-        south_east: to_geodetic(zoom, xf + 1.0, yf + 1.0),
+        north_west: square_to_geodetic(&tile_to_square(zoom, x as f64, y as f64)),
+        north_east: square_to_geodetic(&tile_to_square(zoom, (x + 1) as f64, y as f64)),
+        south_west: square_to_geodetic(&tile_to_square(zoom, x as f64, (y + 1) as f64)),
+        south_east: square_to_geodetic(&tile_to_square(zoom, (x + 1) as f64, (y + 1) as f64)),
     };
 }
-// pub fn geodetic_to_web_mercator(longitude: f64, latitude: f64) -> (f64, f64) {
-//     let pi = std::f64::consts::PI;
-//     // let max_lat = 2.0 * (pi.exp()).atan() - pi / 2.0;
-//     // println!("max lat {}", max_lat.to_degrees());
-//     let x = (longitude + 180.0) / 360.0;
-//     let lat_rad = latitude.to_radians();
-//     let y_web_mercator = (lat_rad.tan() + 1.0 / lat_rad.cos()).ln();
-//     // println!("y_wm {}", y_web_mercator);
-//     let y = (0.5 - y_web_mercator / (2.0 * pi)) * zoom_scale;
-//     return (x, y);
-// }
 
-pub fn to_xy(zoom: u8, longitude: f64, latitude: f64) -> (f64, f64) {
+pub fn geodetic_to_square(point: &GeoPoint) -> Point {
     let pi = std::f64::consts::PI;
-    let max_lat = 2.0 * (pi.exp()).atan() - pi / 2.0;
-    println!("max lat {}", max_lat.to_degrees());
-    // from wikipedia
-    // let zoom_scale = 1.0 / (2.0 * pi) * 2_i32.pow(zoom as u32) as f64;
-    // println!("zoom scale {}", zoom_scale);
-    // let x = (zoom_scale * (pi + longitude)).floor();
-    // let y = (zoom_scale * (pi - (pi / 4.0 + latitude / 2.0).tan().ln())).floor();
     // from https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames
-    let zoom_scale = 2_i32.pow(zoom as u32) as f64;
-    let x = (longitude + 180.0) / 360.0;
-    let lat_rad = latitude.to_radians();
+    let x = (point.longitude + 180.0) / 360.0;
+    let lat_rad = point.latitude.to_radians();
     let y_web_mercator = (lat_rad.tan() + 1.0 / lat_rad.cos()).ln();
-    println!("y_wm {}", y_web_mercator);
     let y = 0.5 - y_web_mercator / (2.0 * pi);
-    println!("x {} y {}", x, y);
-    return (x * zoom_scale, y * zoom_scale);
+    return Point { x, y };
 }
 
-pub fn to_geodetic(zoom: u8, x: f64, y: f64) -> Point {
-    let pi = std::f64::consts::PI;
-    // from wikipedia
-    // let zoom_scale = 1.0 / (2.0 * pi) * 2_i32.pow(zoom as u32) as f64;
-    // let longitude = x as f64 / zoom_scale - pi;
-    // let latitude = ((pi - y as f64 / zoom_scale).exp().atan() - pi / 4.0) * 2.0;
-    // from https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames
-    let zoom_scale = 2_i32.pow(zoom as u32) as f64;
-    let longitude = x / zoom_scale * 360.0 - 180.0;
-    let latitude = (pi - y / zoom_scale * 2.0 * pi).sinh().atan().to_degrees();
+pub fn square_to_meters(point: &Point) -> Point {
     return Point {
+        x: point.x * 2.0 * XRANGE - XRANGE,
+        y: (1.0 - point.y) * 2.0 * YRANGE - YRANGE,
+    };
+}
+
+pub fn square_to_tile(zoom: u8, point: &Point) -> Point {
+    let zoom_scale = 2_i32.pow(zoom as u32) as f64;
+    return Point {
+        x: point.x * zoom_scale,
+        y: point.y * zoom_scale,
+    };
+}
+
+pub fn tile_to_square(zoom: u8, x: f64, y: f64) -> Point {
+    let zoom_scale = 2_i32.pow(zoom as u32) as f64;
+    Point {
+        x: x as f64 / zoom_scale,
+        y: y as f64 / zoom_scale,
+    }
+}
+
+pub fn square_to_geodetic(point: &Point) -> GeoPoint {
+    let pi = std::f64::consts::PI;
+    // from https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames
+    let longitude = point.x * 360.0 - 180.0;
+    let latitude = (pi - point.y * 2.0 * pi).sinh().atan().to_degrees();
+    return GeoPoint {
         longitude,
         latitude,
     };
@@ -86,6 +92,35 @@ fn tile(input: path::PathBuf) -> Option<path::PathBuf> {
         .unwrap();
     if !result.status.success() {
         println!("failed to make tiles");
+        return None;
+    }
+    return Some(output);
+}
+
+pub fn single_tile(input: path::PathBuf, zoom: u8, x: f64, y: f64) -> Option<path::PathBuf> {
+    let square = tile_to_square(zoom, x as f64, y as f64);
+    let meters = square_to_meters(&square);
+    let mut outname = input.file_stem().unwrap().to_os_string();
+    outname.push("_slope.tif");
+    let output = path::Path::new(input.parent().unwrap()).join(outname);
+    let result = process::Command::new("gdalwarp")
+        .arg("-t_srs")
+        .arg("epsg:3857")
+        .arg("-te")
+        // todo
+        .arg(meters.x)
+        .arg(meters.y)
+        .arg(meters.x + dx)
+        .arg(meters.y + dy)
+        .arg("-ts")
+        .arg("256")
+        .arg("256")
+        .arg(&input)
+        .arg(&output)
+        .output()
+        .unwrap();
+    if !result.status.success() {
+        println!("failed to make slope");
         return None;
     }
     return Some(output);
@@ -113,16 +148,21 @@ mod tests {
     #[test]
     fn test_to_xy() {
         // let (x, y) = to_xy(18, 139.7006793, 35.6590699);
-        let (x, y) = to_xy(10, -119.81924, 49.20555);
-        println!("x {} y {}", x, y);
-        approx::assert_approx!(x, 232798.930207, 1.0e-6);
+        let square = geodetic_to_square(&GeoPoint {
+            longitude: -119.81924,
+            latitude: 49.20555,
+        });
+        let point = square_to_tile(10, &square);
+        println!("m {:?}", square_to_meters(&square));
+        println!("x {} y {}", point.x, point.y);
+        approx::assert_approx!(point.x, 232798.930207, 1.0e-6);
         // source says this shoudl be 103246.410422 but that seems wrong
-        approx::assert_approx!(y, 103246.410438, 1.0e-6);
+        approx::assert_approx!(point.y, 103246.410438, 1.0e-6);
     }
 
     #[test]
     fn test_to_geodetic() {
-        let point = to_geodetic(2, 1.5, 1.5);
+        let point = square_to_geodetic(&tile_to_square(2, 1.5, 1.5));
         approx::assert_approx!(point.longitude, -45.0, 1.0e-6);
         approx::assert_approx!(point.latitude, 40.979898, 1.0e-6);
     }

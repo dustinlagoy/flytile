@@ -1,7 +1,8 @@
+use anyhow::Result;
 use std::path;
 use std::process;
 
-pub fn slope(input: path::PathBuf) -> Option<path::PathBuf> {
+pub fn slope(input: path::PathBuf) -> Result<path::PathBuf> {
     let mut outname = input.file_stem().unwrap().to_os_string();
     outname.push("_slope.tif");
     let output = path::Path::new(input.parent().unwrap()).join(outname);
@@ -12,16 +13,14 @@ pub fn slope(input: path::PathBuf) -> Option<path::PathBuf> {
         .arg("1.0")
         .arg(&input)
         .arg(&output)
-        .output()
-        .unwrap();
+        .output()?;
     if !result.status.success() {
-        println!("failed to make slope");
-        return None;
+        return Err(anyhow!("{:?}", String::from_utf8_lossy(&result.stderr)));
     }
-    return Some(output);
+    return Ok(output);
 }
 
-pub fn angle_shade(input: path::PathBuf) -> Option<path::PathBuf> {
+pub fn angle_shade(input: path::PathBuf) -> Result<path::PathBuf> {
     let mut outname = input.file_stem().unwrap().to_os_string();
     outname.push("_angle_shade.png");
     let output = path::Path::new(input.parent().unwrap()).join(outname);
@@ -32,13 +31,11 @@ pub fn angle_shade(input: path::PathBuf) -> Option<path::PathBuf> {
         .arg(&input)
         .arg("color.txt")
         .arg(&output)
-        .output()
-        .unwrap();
+        .output()?;
     if !result.status.success() {
-        println!("failed to make slope angle shading");
-        return None;
+        return Err(anyhow!("{:?}", String::from_utf8_lossy(&result.stderr)));
     }
-    return Some(output);
+    return Ok(output);
 }
 
 #[cfg(test)]

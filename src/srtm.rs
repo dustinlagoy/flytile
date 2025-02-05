@@ -1,4 +1,5 @@
 use crate::tile;
+use anyhow::Result;
 use std::env;
 use std::fs;
 use std::io;
@@ -39,30 +40,30 @@ impl SRTM {
         }
     }
 
-    pub async fn get(&self, point: tile::GeoPoint) -> Option<PathBuf> {
+    pub async fn get(&self, point: tile::GeoPoint) -> Result<PathBuf> {
         let (i_lon, i_lat) = srtm_tile(point);
         self.get_tile(i_lon, i_lat).await
     }
 
-    pub async fn get_tile(&self, i_lon: i32, i_lat: i32) -> Option<PathBuf> {
+    pub async fn get_tile(&self, i_lon: i32, i_lat: i32) -> Result<PathBuf> {
         let cache = env::var("FLYTILE_CACHE_DIR").unwrap_or("/tmp".into());
         let output_dir = Path::new(&cache).join("srtm");
         let output = output_dir.join(format!("srtm_{:02}_{:02}.tif", i_lon, i_lat));
         let _lock = self.download_lock.lock().await;
         if !output_dir.exists() {
-            fs::create_dir_all(output_dir).ok()?;
+            fs::create_dir_all(output_dir)?;
         }
         println!("trying srtm {:?}", output);
         if !output.exists() {
             self.extract(self.download(i_lon, i_lat).await?);
         }
         if output.exists() {
-            return Some(output);
+            return Ok(output);
         }
-        None
+        return Err(anyhow!("could not save srtm data"));
     }
 
-    pub async fn get_all(&self, bounds: tile::Bounds) -> Option<PathBuf> {
+    pub async fn get_all(&self, bounds: tile::Bounds) -> Result<PathBuf> {
         let (nw_lon, nw_lat) = srtm_tile(bounds.north_west);
         let (ne_lon, ne_lat) = srtm_tile(bounds.north_east);
         let (sw_lon, sw_lat) = srtm_tile(bounds.south_west);
@@ -80,7 +81,7 @@ impl SRTM {
         return make_vrt(&files);
     }
 
-    pub async fn download(&self, i_lon: i32, i_lat: i32) -> Option<PathBuf> {
+    pub async fn download(&self, i_lon: i32, i_lat: i32) -> Result<PathBuf> {
         let url = format!(
         "https://srtm.csi.cgiar.org/wp-content/uploads/files/srtm_5x5/TIFF/srtm_{i_lon:02}_{i_lat:02}.zip",
         i_lon=i_lon,
@@ -90,15 +91,14 @@ impl SRTM {
         println!("downloading {}", url);
         let client = reqwest::Client::builder()
             .timeout(time::Duration::from_secs(180))
-            .build()
-            .ok()?;
-        let response = client.get(url).send().await.ok()?;
+            .build()?;
+        let response = client.get(url).send().await?;
         // let response = reqwest::blocking::get(url).ok()?;
-        response.error_for_status_ref().ok()?;
-        let mut content = Cursor::new(response.bytes().await.ok()?);
-        let mut file = fs::File::create(&output).ok()?;
-        io::copy(&mut content, &mut file).ok()?;
-        return Some(output.to_path_buf());
+        response.error_for_status_ref()?;
+        let mut content = Cursor::new(response.bytes().await?);
+        let mut file = fs::File::create(&output)?;
+        io::copy(&mut content, &mut file)?;
+        return Ok(output.to_path_buf());
     }
 
     fn extract(&self, path: PathBuf) {
@@ -122,18 +122,16 @@ pub fn srtm_tile(point: tile::GeoPoint) -> (i32, i32) {
     return (i_lon, i_lat);
 }
 
-fn make_vrt(paths: &Vec<PathBuf>) -> Option<PathBuf> {
+fn make_vrt(paths: &Vec<PathBuf>) -> Result<PathBuf> {
     let output = env::temp_dir().join("tmp.vrt");
     let result = process::Command::new("gdalbuildvrt")
         .arg(&output)
         .args(paths)
-        .output()
-        .unwrap();
+        .output()?;
     if !result.status.success() {
-        println!("failed to make slope");
-        return None;
+        return Err(anyhow!("{:?}", String::from_utf8_lossy(&result.stderr)));
     }
-    return Some(output);
+    return Ok(output);
 }
 
 #[cfg(test)]

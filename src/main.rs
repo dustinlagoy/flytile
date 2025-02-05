@@ -1,5 +1,7 @@
 #[macro_use]
 extern crate rocket;
+#[macro_use]
+extern crate anyhow;
 use rocket::fs::NamedFile;
 use rocket::State;
 use std::env;

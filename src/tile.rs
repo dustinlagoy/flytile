@@ -1,4 +1,5 @@
 use crate::approx;
+use anyhow::Result;
 use std::path;
 use std::process;
 
@@ -78,7 +79,7 @@ pub fn square_to_geodetic(point: &Point) -> GeoPoint {
     };
 }
 
-fn tile(input: path::PathBuf) -> Option<path::PathBuf> {
+fn tile(input: path::PathBuf) -> Result<path::PathBuf> {
     let mut outname = input.file_stem().unwrap().to_os_string();
     outname.push("_tiles");
     let output = path::Path::new(input.parent().unwrap()).join(outname);
@@ -88,16 +89,14 @@ fn tile(input: path::PathBuf) -> Option<path::PathBuf> {
         .arg("4")
         .arg(&input)
         .arg(&output)
-        .output()
-        .unwrap();
+        .output()?;
     if !result.status.success() {
-        println!("failed to make tiles");
-        return None;
+        return Err(anyhow!("{:?}", String::from_utf8_lossy(&result.stderr)));
     }
-    return Some(output);
+    return Ok(output);
 }
 
-pub fn single_tile(input: path::PathBuf, zoom: u8, x: f64, y: f64) -> Option<path::PathBuf> {
+pub fn single_tile(input: path::PathBuf, zoom: u8, x: f64, y: f64) -> Result<path::PathBuf> {
     let nw_square = tile_to_square(zoom, x, y);
     let nw_meters = square_to_meters(&nw_square);
     let se_square = tile_to_square(zoom, x + 1.0, y + 1.0);
@@ -122,18 +121,12 @@ pub fn single_tile(input: path::PathBuf, zoom: u8, x: f64, y: f64) -> Option<pat
         .arg("bilinear")
         .arg(&input)
         .arg(&output)
-        .output()
-        .unwrap();
+        .output()?;
     if !result.status.success() {
-        println!("failed to generate tile");
-        return None;
+        return Err(anyhow!("{:?}", String::from_utf8_lossy(&result.stderr)));
     }
-    return Some(output);
+    return Ok(output);
 }
-
-// fn from_source(source: path::PathBuf, zoom: u8, x:u32,y:u32) -> Option<path::PathBuf> {
-
-// }
 
 #[cfg(test)]
 mod tests {

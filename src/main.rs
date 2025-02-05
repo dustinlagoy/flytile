@@ -16,28 +16,35 @@ fn index() -> String {
 }
 
 #[get("/<zoom>/<x>/<y_with_extension>")]
-async fn slope_tiles(zoom: u8, x: u8, y_with_extension: &str) -> Option<NamedFile> {
+async fn slope_tiles(zoom: u8, x: u32, y_with_extension: &str) -> Option<NamedFile> {
     let y = y_with_extension
         .strip_suffix(".png")
         .unwrap()
-        .parse::<u8>()
+        .parse::<u32>()
         .unwrap();
     let cache = env::var("FLYTILE_CACHE_DIR").unwrap_or("/tmp".into());
-    let geopoint = tile::tile_to_geodetic(
-        zoom,
-        &tile::Point {
-            x: x as f64,
-            y: y as f64,
-        },
-    );
-    let elevation = srtm::get(geopoint);
-    let path = path::Path::new(&cache)
-        .join("srtm_13_03_slope_angle_shade_tiles")
-        .join(format!("{}", zoom))
-        .join(format!("{}", x))
-        .join(format!("{}.png", y));
-    println!("trying {:?}", path);
-    NamedFile::open(&path).await.ok()
+    let geopoint = tile::square_to_geodetic(&tile::tile_to_square(zoom, x as f64, y as f64));
+    println!("geopoint {:?}", geopoint);
+    let shade = rocket::tokio::task::spawn_blocking(move || {
+        let elevation = srtm::get(geopoint).unwrap();
+        println!("elevation {:?}", elevation);
+        let elevation_tile = tile::single_tile(elevation, zoom, x as f64, y as f64).unwrap();
+        println!("elevation tile {:?}", elevation_tile);
+        let slope = slope::slope(elevation_tile).unwrap();
+        println!("slope {:?}", slope);
+        let shade = slope::angle_shade(slope).unwrap();
+        println!("shade {:?}", shade);
+        shade
+    })
+    .await
+    .ok()?;
+    // let path = path::Path::new(&cache)
+    //     .join("srtm_13_03_slope_angle_shade_tiles")
+    //     .join(format!("{}", zoom))
+    //     .join(format!("{}", x))
+    //     .join(format!("{}.png", y));
+    // println!("trying {:?}", path);
+    NamedFile::open(&shade).await.ok()
 }
 
 #[launch]

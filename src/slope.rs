@@ -1,14 +1,15 @@
 use std::path;
 use std::process;
 
-fn slope(input: path::PathBuf) -> Option<path::PathBuf> {
+pub fn slope(input: path::PathBuf) -> Option<path::PathBuf> {
     let mut outname = input.file_stem().unwrap().to_os_string();
     outname.push("_slope.tif");
     let output = path::Path::new(input.parent().unwrap()).join(outname);
     let result = process::Command::new("gdaldem")
         .arg("slope")
         .arg("-s")
-        .arg("111120")
+        // .arg("111120")
+        .arg("1.0")
         .arg(&input)
         .arg(&output)
         .output()
@@ -20,9 +21,9 @@ fn slope(input: path::PathBuf) -> Option<path::PathBuf> {
     return Some(output);
 }
 
-fn angle_shade(input: path::PathBuf) -> Option<path::PathBuf> {
+pub fn angle_shade(input: path::PathBuf) -> Option<path::PathBuf> {
     let mut outname = input.file_stem().unwrap().to_os_string();
-    outname.push("_angle_shade.tif");
+    outname.push("_angle_shade.png");
     let output = path::Path::new(input.parent().unwrap()).join(outname);
     let result = process::Command::new("gdaldem")
         .arg("color-relief")

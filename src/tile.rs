@@ -98,29 +98,34 @@ fn tile(input: path::PathBuf) -> Option<path::PathBuf> {
 }
 
 pub fn single_tile(input: path::PathBuf, zoom: u8, x: f64, y: f64) -> Option<path::PathBuf> {
-    let square = tile_to_square(zoom, x as f64, y as f64);
-    let meters = square_to_meters(&square);
+    let nw_square = tile_to_square(zoom, x, y);
+    let nw_meters = square_to_meters(&nw_square);
+    let se_square = tile_to_square(zoom, x + 1.0, y + 1.0);
+    let se_meters = square_to_meters(&se_square);
     let mut outname = input.file_stem().unwrap().to_os_string();
-    outname.push("_slope.tif");
+    outname.push(format!("_tile_{}_{}_{}.tif", zoom, x, y));
     let output = path::Path::new(input.parent().unwrap()).join(outname);
     let result = process::Command::new("gdalwarp")
         .arg("-t_srs")
         .arg("epsg:3857")
         .arg("-te")
-        // todo
-        .arg(meters.x)
-        .arg(meters.y)
-        .arg(meters.x + dx)
-        .arg(meters.y + dy)
+        .arg(format!("{}", nw_meters.x))
+        .arg(format!("{}", nw_meters.y))
+        .arg(format!("{}", se_meters.x))
+        .arg(format!("{}", se_meters.y))
         .arg("-ts")
         .arg("256")
         .arg("256")
+        .arg("-ot")
+        .arg("Float32")
+        .arg("-r")
+        .arg("bilinear")
         .arg(&input)
         .arg(&output)
         .output()
         .unwrap();
     if !result.status.success() {
-        println!("failed to make slope");
+        println!("failed to generate tile");
         return None;
     }
     return Some(output);

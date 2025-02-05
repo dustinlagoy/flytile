@@ -54,9 +54,12 @@ pub fn retrieve_all(bounds: tile::Bounds) -> Option<PathBuf> {
 pub fn get(point: tile::GeoPoint) -> Option<PathBuf> {
     let (i_lon, i_lat) = srtm_tile(point);
     let cache = env::var("FLYTILE_CACHE_DIR").unwrap_or("/tmp".into());
-    let output = Path::new(&cache)
-        .join("srtm")
-        .join(format!("srtm_{:02}_{:02}.tif", i_lon, i_lat));
+    let output_dir = Path::new(&cache).join("srtm");
+    let output = output_dir.join(format!("srtm_{:02}_{:02}.tif", i_lon, i_lat));
+    if !output_dir.exists() {
+        fs::create_dir_all(output_dir).ok()?;
+    }
+    println!("trying srtm {:?}", output);
     if !output.exists() {
         extract(download(i_lon, i_lat)?);
     }
@@ -76,15 +79,16 @@ pub fn download(i_lon: i32, i_lat: i32) -> Option<PathBuf> {
     let output = Path::new(&cache)
         .join("srtm")
         .join(format!("{}_{}.zip", i_lon, i_lat));
-    let mut file = fs::File::create(&output).ok()?;
     println!("downloading {}", url);
     let client = reqwest::blocking::Client::builder()
-        .timeout(time::Duration::from_secs(300))
+        .timeout(time::Duration::from_secs(180))
         .build()
         .ok()?;
     let response = client.get(url).send().ok()?;
+    // let response = reqwest::blocking::get(url).ok()?;
     response.error_for_status_ref().ok()?;
     let mut content = Cursor::new(response.bytes().ok()?);
+    let mut file = fs::File::create(&output).ok()?;
     io::copy(&mut content, &mut file).ok()?;
     return Some(output.to_path_buf());
 }

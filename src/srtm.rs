@@ -87,20 +87,20 @@ impl SRTM {
     }
 
     pub async fn get_all(&self, bounds: tile::Bounds) -> Result<PathBuf> {
-        let (nw_lon, nw_lat) = srtm_tile(bounds.north_west);
-        let (ne_lon, ne_lat) = srtm_tile(bounds.north_east);
-        let (sw_lon, sw_lat) = srtm_tile(bounds.south_west);
-        let (se_lon, se_lat) = srtm_tile(bounds.south_east);
-        let min_lon = nw_lon.min(sw_lon);
-        let min_lat = sw_lat.min(se_lat);
-        let max_lon = ne_lon.max(se_lon);
-        let max_lat = nw_lat.max(ne_lat);
+        // let (nw_lon, nw_lat) = srtm_tile(bounds.north_west);
+        // let (ne_lon, ne_lat) = srtm_tile(bounds.north_east);
+        // let (sw_lon, sw_lat) = srtm_tile(bounds.south_west);
+        // let (se_lon, se_lat) = srtm_tile(bounds.south_east);
+        // let min_lon = nw_lon.min(sw_lon);
+        // let min_lat = sw_lat.min(se_lat);
+        // let max_lon = ne_lon.max(se_lon);
+        // let max_lat = nw_lat.max(ne_lat);
         let mut files = vec![];
-        for i in min_lon..max_lon + 1 {
-            for j in min_lat..max_lat + 1 {
-                // files.push(self.get_tile(i, j).await?);
-            }
-        }
+        // for i in min_lon..max_lon + 1 {
+        //     for j in min_lat..max_lat + 1 {
+        //         // files.push(self.get_tile(i, j).await?);
+        //     }
+        // }
         return make_vrt(&files);
     }
 

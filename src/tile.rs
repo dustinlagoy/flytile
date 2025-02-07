@@ -120,7 +120,7 @@ pub fn single_tile(input: path::PathBuf, zoom: u8, x: f64, y: f64) -> Result<pat
         .arg("-ot")
         .arg("Float32")
         .arg("-r")
-        .arg("lanczos")
+        .arg("cubicspline")
         .arg(&input)
         .arg(&output)
         .output()?;

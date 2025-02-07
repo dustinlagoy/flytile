@@ -2,6 +2,7 @@
 extern crate rocket;
 #[macro_use]
 extern crate anyhow;
+use anyhow::Result;
 use rocket::fs::NamedFile;
 use rocket::State;
 use std::env;
@@ -12,9 +13,19 @@ mod slope;
 mod srtm;
 mod tile;
 
+#[launch]
+fn rocket() -> _ {
+    let cache = env::var("FLYTILE_CACHE_DIR").unwrap_or("/tmp".into());
+    rocket::build()
+        .manage(srtm::SRTM::new(path::Path::new(&cache).join("srtm")))
+        .manage(slope::Pipeline::new(path::Path::new(&cache).join("slope")))
+        .mount("/slope", routes![slope_tiles])
+}
+
 #[get("/<zoom>/<x>/<y_with_extension>")]
 async fn slope_tiles(
     elev: &State<srtm::SRTM>,
+    pipe: &State<slope::Pipeline>,
     zoom: u8,
     x: u32,
     y_with_extension: &str,
@@ -28,17 +39,8 @@ async fn slope_tiles(
     println!("geopoint {:?}", geopoint);
     let elevation = elev.get(geopoint).await.unwrap();
     println!("elevation {:?}", elevation);
-    let shade = rocket::tokio::task::spawn_blocking(move || {
-        let elevation_tile = tile::single_tile(elevation, zoom, x as f64, y as f64).unwrap();
-        println!("elevation tile {:?}", elevation_tile);
-        let slope = slope::slope(elevation_tile).unwrap();
-        println!("slope {:?}", slope);
-        let shade = slope::angle_shade(slope).unwrap();
-        println!("shade {:?}", shade);
-        shade
-    })
-    .await
-    .ok()?;
+    let shade = pipe.get(elevation, zoom, x, y).await.unwrap();
+    // let shade = rocket::tokio::task::spawn_blocking(move || {}).await.ok()?;
     // let path = path::Path::new(&cache)
     //     .join("srtm_13_03_slope_angle_shade_tiles")
     //     .join(format!("{}", zoom))
@@ -46,12 +48,4 @@ async fn slope_tiles(
     //     .join(format!("{}.png", y));
     // println!("trying {:?}", path);
     NamedFile::open(&shade).await.ok()
-}
-
-#[launch]
-fn rocket() -> _ {
-    let cache = env::var("FLYTILE_CACHE_DIR").unwrap_or("/tmp".into());
-    rocket::build()
-        .manage(srtm::SRTM::new(path::Path::new(&cache).join("srtm")))
-        .mount("/slope", routes![slope_tiles])
 }

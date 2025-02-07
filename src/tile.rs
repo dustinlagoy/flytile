@@ -4,7 +4,7 @@ use std::path;
 use std::process;
 
 const XRANGE: f64 = 20037508.34;
-const YRANGE: f64 = 20048966.1;
+const YRANGE: f64 = 20037508.34;
 
 #[derive(Debug)]
 pub struct Point {
@@ -48,7 +48,7 @@ pub fn geodetic_to_square(point: &GeoPoint) -> Point {
 pub fn square_to_meters(point: &Point) -> Point {
     return Point {
         x: point.x * 2.0 * XRANGE - XRANGE,
-        y: (1.0 - point.y) * 2.0 * YRANGE - YRANGE,
+        y: YRANGE - point.y * 2.0 * YRANGE,
     };
 }
 
@@ -107,18 +107,20 @@ pub fn single_tile(input: path::PathBuf, zoom: u8, x: f64, y: f64) -> Result<pat
     let result = process::Command::new("gdalwarp")
         .arg("-t_srs")
         .arg("epsg:3857")
+        .arg("-te_srs")
+        .arg("epsg:3857")
         .arg("-te")
         .arg(format!("{}", nw_meters.x))
-        .arg(format!("{}", nw_meters.y))
-        .arg(format!("{}", se_meters.x))
         .arg(format!("{}", se_meters.y))
+        .arg(format!("{}", se_meters.x))
+        .arg(format!("{}", nw_meters.y))
         .arg("-ts")
         .arg("256")
         .arg("256")
         .arg("-ot")
         .arg("Float32")
         .arg("-r")
-        .arg("bilinear")
+        .arg("lanczos")
         .arg(&input)
         .arg(&output)
         .output()?;
@@ -144,24 +146,53 @@ mod tests {
     }
 
     #[test]
-    fn test_to_xy() {
-        // let (x, y) = to_xy(18, 139.7006793, 35.6590699);
-        let square = geodetic_to_square(&GeoPoint {
-            longitude: -119.81924,
-            latitude: 49.20555,
-        });
-        let point = square_to_tile(10, &square);
-        println!("m {:?}", square_to_meters(&square));
-        println!("x {} y {}", point.x, point.y);
+    fn test_edges() {
+        let nw_square = tile_to_square(14, 0.0, 0.0);
+        approx::assert_approx!(nw_square.x, 0.0, 1.0e-12);
+        approx::assert_approx!(nw_square.y, 0.0, 1.0e-12);
+        let nw_meters = square_to_meters(&nw_square);
+        approx::assert_approx!(nw_meters.x, -20037508.34, 1.0e-6);
+        approx::assert_approx!(nw_meters.y, 20037508.34, 1.0e-6);
+        let nw_geo = square_to_geodetic(&nw_square);
+        approx::assert_approx!(nw_geo.longitude, -180.0, 1.0e-9);
+        approx::assert_approx!(nw_geo.latitude, 85.0511287798066, 1.0e-9);
+
+        let se_square = tile_to_square(14, 16384.0, 16384.0);
+        approx::assert_approx!(se_square.x, 1.0, 1.0e-12);
+        approx::assert_approx!(se_square.y, 1.0, 1.0e-12);
+        let se_meters = square_to_meters(&se_square);
+        approx::assert_approx!(se_meters.x, 20037508.34, 1.0e-6);
+        approx::assert_approx!(se_meters.y, -20037508.34, 1.0e-6);
+        let se_geo = square_to_geodetic(&se_square);
+        approx::assert_approx!(se_geo.longitude, 180.0, 1.0e-9);
+        approx::assert_approx!(se_geo.latitude, -85.0511287798066, 1.0e-9);
+    }
+
+    #[test]
+    fn test_geodetic_to_tile() {
+        // example from https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames
+        let geo = GeoPoint {
+            longitude: 139.7006793,
+            latitude: 35.6590699,
+        };
+        let square = geodetic_to_square(&geo);
+        approx::assert_approx!(square.x, 0.8880574425, 1.0e-12);
+        approx::assert_approx!(square.y, 0.3938537995827473, 1.0e-12);
+
+        let meters = square_to_meters(&square);
+        approx::assert_approx!(meters.x, 15551408.480985638, 1.0e-6);
+        approx::assert_approx!(meters.y, 4253810.7522400245, 1.0e-6);
+
+        let point = square_to_tile(18, &square);
         approx::assert_approx!(point.x, 232798.930207, 1.0e-6);
-        // source says this shoudl be 103246.410422 but that seems wrong
+        // source says this should be 103246.410422 but that seems wrong
         approx::assert_approx!(point.y, 103246.410438, 1.0e-6);
     }
 
     #[test]
-    fn test_to_geodetic() {
+    fn test_tile_to_geodetic() {
         let point = square_to_geodetic(&tile_to_square(2, 1.5, 1.5));
-        approx::assert_approx!(point.longitude, -45.0, 1.0e-6);
-        approx::assert_approx!(point.latitude, 40.979898, 1.0e-6);
+        approx::assert_approx!(point.longitude, -45.0, 1.0e-9);
+        approx::assert_approx!(point.latitude, 40.979898070, 1.0e-9);
     }
 }

@@ -3,6 +3,7 @@ use anyhow::Result;
 use std::fs;
 use std::path;
 use std::process;
+use tempfile::NamedTempFile;
 
 pub struct Pipeline {
     cache: path::PathBuf,
@@ -19,7 +20,7 @@ impl Pipeline {
 
     pub async fn get(
         &self,
-        elevation: path::PathBuf,
+        elevations: &[path::PathBuf],
         zoom: u8,
         x: u32,
         y: u32,
@@ -31,7 +32,10 @@ impl Pipeline {
             fs::create_dir_all(output_dir)?;
         }
         if !output.exists() {
-            let elevation_tile = tile::single_tile(elevation, zoom, x as f64, y as f64).unwrap();
+            let vrt_file = NamedTempFile::new()?;
+            let vrt_path = vrt_file.path().to_path_buf();
+            make_vrt(elevations, &vrt_path)?;
+            let elevation_tile = tile::single_tile(vrt_path, zoom, x as f64, y as f64).unwrap();
             println!("elevation tile {:?}", elevation_tile);
             // scale slope by cosine of tile center latitude since this is a conformal projection
             // from John P. Snyder https://doi.org/10.3133/pp1395
@@ -137,4 +141,15 @@ mod tests {
             error_at_forty_degrees
         );
     }
+}
+
+fn make_vrt(paths: &[path::PathBuf], output: &path::PathBuf) -> Result<()> {
+    let result = process::Command::new("gdalbuildvrt")
+        .arg(&output)
+        .args(paths)
+        .output()?;
+    if !result.status.success() {
+        return Err(anyhow!("{:?}", String::from_utf8_lossy(&result.stderr)));
+    }
+    return Ok(());
 }

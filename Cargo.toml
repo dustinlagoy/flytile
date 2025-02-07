@@ -11,5 +11,6 @@ license-file = "LICENSE.txt"
 anyhow = "1.0.95"
 reqwest = { version = "0.12.12", features = ["blocking", "cookies"] }
 rocket = "0.5.1"
+tempfile = "3.16.0"
 tokio = { version = "1.43.0", features = ["sync"] }
 zip = "2.2.2"

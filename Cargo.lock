@@ -484,6 +484,7 @@ dependencies = [
  "anyhow",
  "reqwest",
  "rocket",
+ "tempfile",
  "tokio",
  "zip",
 ]

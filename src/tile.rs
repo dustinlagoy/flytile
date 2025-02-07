@@ -1,4 +1,3 @@
-use crate::approx;
 use anyhow::Result;
 use std::path;
 use std::process;
@@ -133,6 +132,7 @@ pub fn single_tile(input: path::PathBuf, zoom: u8, x: f64, y: f64) -> Result<pat
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::approx;
 
     #[test]
     fn test_tile() {

@@ -6,7 +6,6 @@ use std::io;
 use std::io::Cursor;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process;
 use std::time;
 use tokio;
 extern crate reqwest;
@@ -86,22 +85,42 @@ impl SRTM {
         return Err(anyhow!("could not save srtm data"));
     }
 
-    pub async fn get_all(&self, bounds: tile::Bounds) -> Result<PathBuf> {
-        // let (nw_lon, nw_lat) = srtm_tile(bounds.north_west);
-        // let (ne_lon, ne_lat) = srtm_tile(bounds.north_east);
-        // let (sw_lon, sw_lat) = srtm_tile(bounds.south_west);
-        // let (se_lon, se_lat) = srtm_tile(bounds.south_east);
-        // let min_lon = nw_lon.min(sw_lon);
-        // let min_lat = sw_lat.min(se_lat);
-        // let max_lon = ne_lon.max(se_lon);
-        // let max_lat = nw_lat.max(ne_lat);
+    pub async fn get_all(&self, bounds: tile::Bounds) -> Result<Vec<PathBuf>> {
+        let min_lon = bounds
+            .north_west
+            .longitude
+            .min(bounds.south_west.longitude)
+            .floor() as i32;
+        let min_lat = bounds
+            .south_west
+            .latitude
+            .min(bounds.south_east.latitude)
+            .floor() as i32;
+        let max_lon = bounds
+            .north_east
+            .longitude
+            .max(bounds.south_east.longitude)
+            .ceil() as i32;
+        let max_lat = bounds
+            .north_west
+            .latitude
+            .max(bounds.north_east.latitude)
+            .ceil() as i32;
         let mut files = vec![];
-        // for i in min_lon..max_lon + 1 {
-        //     for j in min_lat..max_lat + 1 {
-        //         // files.push(self.get_tile(i, j).await?);
-        //     }
-        // }
-        return make_vrt(&files);
+        // println!("bounds {:?}", bounds);
+        // println!("lon {} {}", min_lon, max_lon);
+        // println!("lat {} {}", min_lat, max_lat);
+        for i in min_lon..max_lon {
+            for j in min_lat..max_lat {
+                let point = tile::GeoPoint {
+                    longitude: i as f64,
+                    latitude: j as f64,
+                };
+                // println!("get file {} {} {}", i, j, id);
+                files.push(self.get(point).await?);
+            }
+        }
+        return Ok(files);
     }
 
     pub async fn download(&self, id: &str) -> Result<PathBuf> {
@@ -147,21 +166,10 @@ pub fn srtm_id(point: tile::GeoPoint) -> String {
     output
 }
 
-fn make_vrt(paths: &Vec<PathBuf>) -> Result<PathBuf> {
-    let output = env::temp_dir().join("tmp.vrt");
-    let result = process::Command::new("gdalbuildvrt")
-        .arg(&output)
-        .args(paths)
-        .output()?;
-    if !result.status.success() {
-        return Err(anyhow!("{:?}", String::from_utf8_lossy(&result.stderr)));
-    }
-    return Ok(output);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::runtime::Runtime;
 
     #[test]
     fn test_id() {
@@ -184,9 +192,10 @@ mod tests {
             latitude: 50.0,
         });
         let srtm = SRTM::new(Path::new("/tmp").into());
-        // let path = srtm.download(i_lat, i_lon).unwrap();
-        // assert_eq!(path.to_str().unwrap(), "/tmp/13_3.zip");
-        // srtm.extract(path);
-        // assert!(Path::new("/tmp/srtm_13_03.hdr").exists());
+        let runtime = Runtime::new().unwrap();
+        let path = runtime.block_on(srtm.download(&id)).unwrap();
+        assert_eq!(path.to_str().unwrap(), "/tmp/13_3.zip");
+        srtm.extract(path);
+        assert!(Path::new("/tmp/srtm_13_03.hdr").exists());
     }
 }

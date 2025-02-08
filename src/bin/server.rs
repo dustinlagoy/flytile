@@ -1,16 +1,12 @@
 #[macro_use]
 extern crate rocket;
-#[macro_use]
-extern crate anyhow;
+use flytile::slope;
+use flytile::srtm;
+use flytile::tile;
 use rocket::fs::NamedFile;
 use rocket::State;
 use std::env;
 use std::path;
-#[macro_use]
-mod approx;
-mod slope;
-mod srtm;
-mod tile;
 
 #[launch]
 fn rocket() -> _ {

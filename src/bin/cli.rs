@@ -52,6 +52,18 @@ fn main() {
             println!("tile north east corner:     {:?}", bounds.north_east);
             println!("tile south west corner:     {:?}", bounds.south_west);
             println!("tile south east corner:     {:?}", bounds.south_east);
+            let meters_nw = tile::square_to_meters(&tile::tile_to_square(
+                args.zoom,
+                args.x as f64,
+                args.y as f64,
+            ));
+            let meters_se = tile::square_to_meters(&tile::tile_to_square(
+                args.zoom,
+                args.x as f64 + 1.0,
+                args.y as f64 + 1.0,
+            ));
+            println!("tile north west corner:     {:?}", meters_nw);
+            println!("tile south east corner:     {:?}", meters_se);
         }
     }
 }

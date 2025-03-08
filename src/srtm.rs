@@ -1,3 +1,4 @@
+use crate::cache;
 use crate::tile;
 use anyhow::Result;
 use std::env;
@@ -6,19 +7,22 @@ use std::io;
 use std::io::Cursor;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time;
 use tokio;
 extern crate reqwest;
 
 // const URL: &'static str = "https://srtm.csi.cgiar.org/wp-content/uploads/files/srtm_5x5/TIFF/srtm_{i_lon:02d}_{i_lat:02d}.zip";
 
-async fn redirect_with_auth_and_cookies(url: &str) -> Result<reqwest::Response> {
-    println!("downloading {}", url);
+fn redirect_with_auth_and_cookies(
+    url: &str,
+) -> std::result::Result<reqwest::blocking::Response, cache::GeneratorError> {
+    println!("retrieving {}", url);
     let password = env::var("FLYTILE_SRTM_PASSWORD")?;
     let mut jar = Some(reqwest::cookie::Jar::default());
     let mut new_url = url.to_string();
     for i in 0..10 {
-        let client = reqwest::Client::builder()
+        let client = reqwest::blocking::Client::builder()
             .cookie_provider(std::sync::Arc::new(jar.take().unwrap()))
             .redirect(reqwest::redirect::Policy::none())
             .timeout(time::Duration::from_secs(180))
@@ -26,8 +30,7 @@ async fn redirect_with_auth_and_cookies(url: &str) -> Result<reqwest::Response> 
         let response = client
             .get(&new_url)
             .basic_auth("dustin.lagoy", Some(&password))
-            .send()
-            .await?;
+            .send()?;
         println!();
         println!("{} status {:?}", i, response.status());
         println!("{} head {:?}", i, response.headers());
@@ -46,18 +49,27 @@ async fn redirect_with_auth_and_cookies(url: &str) -> Result<reqwest::Response> 
         }
         jar = Some(tmp_jar);
     }
-    return Err(anyhow!("too many redirects"));
+    return Err(cache::GeneratorError);
 }
 
 pub struct SRTM {
-    cache: PathBuf,
+    cache_dir: PathBuf,
+    cache_tx: mpsc::Sender<(
+        cache::Request,
+        Box<dyn FnOnce() -> cache::CacheResult + Send>,
+    )>,
     download_lock: tokio::sync::Mutex<u8>,
 }
 
 impl SRTM {
-    pub fn new(cache: PathBuf) -> Self {
+    pub fn new(cache_dir: PathBuf) -> Self {
+        let cache = cache::Cache::from_existing_directory(cache_dir.clone()).unwrap();
+        println!("run cache");
+        let tx = cache::run_cache(cache);
+        println!("done run cache");
         SRTM {
-            cache,
+            cache_dir,
+            cache_tx: tx,
             download_lock: tokio::sync::Mutex::new(0),
         }
     }
@@ -68,21 +80,21 @@ impl SRTM {
     }
 
     pub async fn get_tile(&self, id: &str) -> Result<PathBuf> {
-        let cache = env::var("FLYTILE_CACHE_DIR").unwrap_or("/tmp".into());
-        let output_dir = Path::new(&cache).join("srtm");
-        let output = output_dir.join(format!("{}.hgt", id));
-        let _lock = self.download_lock.lock().await;
-        if !output_dir.exists() {
-            fs::create_dir_all(output_dir)?;
-        }
-        println!("trying srtm {:?}", output);
-        if !output.exists() {
-            self.extract(self.download(id).await?);
-        }
-        if output.exists() {
-            return Ok(output);
-        }
-        return Err(anyhow!("could not save srtm data"));
+        let out_dir = self.cache_dir.clone();
+        let tmp: String = id.to_string();
+        let generator = move || download_tile(out_dir, &tmp);
+        let (tx, rx) = mpsc::channel();
+        self.cache_tx
+            .send((
+                cache::Request {
+                    key: id.into(),
+                    send_back: tx,
+                },
+                Box::new(generator),
+            ))
+            .unwrap();
+        let result = rx.recv()??;
+        return Ok(result);
     }
 
     pub async fn get_all(&self, bounds: tile::Bounds) -> Result<Vec<PathBuf>> {
@@ -122,33 +134,37 @@ impl SRTM {
         }
         return Ok(files);
     }
+}
 
-    pub async fn download(&self, id: &str) -> Result<PathBuf> {
-        let url = format!(
-            "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/{}.SRTMGL1.hgt.zip",
-            id
-        );
-        let output = Path::new(&self.cache).join(format!("{}.zip", id));
-        println!("downloading {}", url);
-        let response = redirect_with_auth_and_cookies(&url).await?;
-        response.error_for_status_ref()?;
-        let mut content = Cursor::new(response.bytes().await?);
-        let mut file = fs::File::create(&output)?;
-        io::copy(&mut content, &mut file)?;
-        return Ok(output.to_path_buf());
-    }
+fn download_tile(output_directory: PathBuf, id: &str) -> cache::CacheResult {
+    let url = format!(
+        "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/{}.SRTMGL1.hgt.zip",
+        id
+    );
+    let zipfile = Path::new("/tmp").join(format!("{}.zip", id));
+    println!("downloading {}", url);
+    let response = redirect_with_auth_and_cookies(&url)?;
+    response.error_for_status_ref()?;
+    let mut content = Cursor::new(response.bytes()?);
+    let mut file = fs::File::create(&zipfile)?;
+    io::copy(&mut content, &mut file)?;
+    let mut outputs = extract(output_directory, zipfile);
+    return outputs.pop().ok_or(cache::GeneratorError);
+}
 
-    fn extract(&self, path: PathBuf) {
-        let file = fs::File::open(&path).unwrap();
-        let mut archive = zip::ZipArchive::new(file).unwrap();
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i).unwrap();
-            let outpath = Path::new(&self.cache).join(file.enclosed_name().unwrap());
-            println!("extracting {:?}", outpath);
-            let mut outfile = fs::File::create(&outpath).unwrap();
-            io::copy(&mut file, &mut outfile).unwrap();
-        }
+fn extract(output_directory: PathBuf, path: PathBuf) -> Vec<PathBuf> {
+    let file = fs::File::open(&path).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    let mut outputs = Vec::new();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let outpath = Path::new(&output_directory).join(file.enclosed_name().unwrap());
+        println!("extracting {:?}", outpath);
+        let mut outfile = fs::File::create(&outpath).unwrap();
+        io::copy(&mut file, &mut outfile).unwrap();
+        outputs.push(outpath);
     }
+    outputs
 }
 
 pub fn srtm_id(point: tile::GeoPoint) -> String {
@@ -169,7 +185,6 @@ pub fn srtm_id(point: tile::GeoPoint) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::runtime::Runtime;
 
     #[test]
     fn test_id() {
@@ -191,11 +206,8 @@ mod tests {
             longitude: -120.0,
             latitude: 50.0,
         });
-        let srtm = SRTM::new(Path::new("/tmp").into());
-        let runtime = Runtime::new().unwrap();
-        let path = runtime.block_on(srtm.download(&id)).unwrap();
-        assert_eq!(path.to_str().unwrap(), "/tmp/13_3.zip");
-        srtm.extract(path);
+        let result = download_tile(PathBuf::new().join("/tmp"), &id).unwrap();
+        assert_eq!(result.to_string_lossy(), "/tmp/srtm_13_03.hdr");
         assert!(Path::new("/tmp/srtm_13_03.hdr").exists());
     }
 }

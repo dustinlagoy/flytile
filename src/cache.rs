@@ -1,4 +1,6 @@
 use anyhow::Result;
+use reqwest;
+use reqwest::header::ToStrError;
 use std::collections;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,15 +17,43 @@ pub enum MaybePath {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct GeneratorError;
+pub struct GeneratorError;
 
-type SendBack = mpsc::Sender<StdResult<PathBuf, GeneratorError>>;
-type GetBack = mpsc::Receiver<StdResult<PathBuf, GeneratorError>>;
+impl std::error::Error for GeneratorError {}
+impl std::fmt::Display for GeneratorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "generator error")
+    }
+}
+impl From<reqwest::Error> for GeneratorError {
+    fn from(_: reqwest::Error) -> Self {
+        GeneratorError
+    }
+}
+impl From<std::env::VarError> for GeneratorError {
+    fn from(_: std::env::VarError) -> Self {
+        GeneratorError
+    }
+}
+impl From<ToStrError> for GeneratorError {
+    fn from(_: ToStrError) -> Self {
+        GeneratorError
+    }
+}
+impl From<std::io::Error> for GeneratorError {
+    fn from(_: std::io::Error) -> Self {
+        GeneratorError
+    }
+}
+
+pub type CacheResult = StdResult<PathBuf, GeneratorError>;
+type SendBack = mpsc::Sender<CacheResult>;
+// type GetBack = mpsc::Receiver<CacheResult>;
 
 #[derive(Debug)]
 pub struct Request {
-    key: PathBuf,
-    send_back: SendBack,
+    pub key: PathBuf,
+    pub send_back: SendBack,
 }
 
 #[derive(Debug)]
@@ -31,10 +61,40 @@ pub struct Cache {
     pub cache: PathBuf,
     items: collections::HashMap<PathBuf, PathBuf>,
     _max_size_bytes: usize,
-    item_timeout: time::Duration,
-    in_progress:
-        collections::HashMap<PathBuf, thread::JoinHandle<StdResult<PathBuf, GeneratorError>>>,
+    _item_timeout: time::Duration,
+    in_progress: collections::HashMap<PathBuf, thread::JoinHandle<CacheResult>>,
     to_return: collections::HashMap<PathBuf, Vec<SendBack>>,
+}
+
+pub fn get<F>(cache: &mut Cache, key: PathBuf, generator: F) -> CacheResult
+where
+    F: FnOnce() -> CacheResult + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    cache.try_get(Request { key, send_back: tx }, generator);
+    return rx.recv().unwrap();
+}
+
+pub fn run_cache(
+    mut cache: Cache,
+) -> mpsc::Sender<(Request, Box<dyn FnOnce() -> CacheResult + Send>)> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || cache_thread(&mut cache, rx));
+    return tx;
+}
+
+fn cache_thread(
+    cache: &mut Cache,
+    rx: mpsc::Receiver<(Request, Box<dyn FnOnce() -> CacheResult + Send>)>,
+) {
+    loop {
+        // can also receive the results of getters
+        if let Ok(todo) = rx.try_recv() {
+            println!("{:?}", todo.0);
+            cache.try_get(todo.0, todo.1);
+        }
+        cache.check();
+    }
 }
 
 impl Cache {
@@ -45,7 +105,7 @@ impl Cache {
             cache: path,
             items,
             _max_size_bytes: 10_000_000_000,
-            item_timeout: time::Duration::from_secs(86400),
+            _item_timeout: time::Duration::from_secs(86400),
             in_progress: collections::HashMap::new(),
             to_return: collections::HashMap::new(),
         })
@@ -57,7 +117,7 @@ impl Cache {
 
     pub fn try_get<F>(&mut self, get: Request, generator: F)
     where
-        F: FnOnce() -> StdResult<PathBuf, GeneratorError> + Send + 'static,
+        F: FnOnce() -> CacheResult + Send + 'static,
     {
         if let Some(path) = self.items.get(&get.key) {
             // immediately return item if in cache
@@ -98,7 +158,7 @@ impl Cache {
         }
     }
 
-    fn is_expired(&self, full_path: PathBuf) -> bool {
+    fn _is_expired(&self, full_path: PathBuf) -> bool {
         let metadata = match fs::metadata(&full_path) {
             Ok(x) => x,
             _ => return true,
@@ -111,21 +171,7 @@ impl Cache {
             Ok(x) => x,
             _ => return false,
         };
-        elapsed > self.item_timeout
-    }
-}
-
-fn run_cache<F>(cache: &mut Cache, rx: mpsc::Receiver<(Request, F)>)
-where
-    F: FnOnce() -> StdResult<PathBuf, GeneratorError> + Send + 'static,
-{
-    loop {
-        // can also receive the results of getters
-        if let Ok(todo) = rx.try_recv() {
-            println!("{:?}", todo.0);
-            cache.try_get(todo.0, todo.1);
-        }
-        cache.check();
+        elapsed > self._item_timeout
     }
 }
 
@@ -151,7 +197,7 @@ mod tests {
     use super::*;
     use tempfile;
 
-    fn check_until(cache: &mut Cache, rx: GetBack) -> StdResult<PathBuf, GeneratorError> {
+    fn check_until(cache: &mut Cache, rx: GetBack) -> CacheResult {
         loop {
             cache.check();
             if let Ok(item) = rx.try_recv() {

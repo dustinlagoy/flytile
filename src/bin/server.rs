@@ -6,7 +6,6 @@ use flytile::srtm;
 use flytile::tile;
 use rocket::fs::NamedFile;
 use rocket::http::ContentType;
-use rocket::response::content;
 use rocket::State;
 use std::env;
 use std::path;

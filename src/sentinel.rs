@@ -1,5 +1,7 @@
+use crate::cache;
+use crate::processing::ProcessingError;
 use crate::tile;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use image::ImageFormat;
 use image::ImageReader;
 use image::Rgba;
@@ -7,9 +9,12 @@ use imageproc::drawing::draw_text_mut;
 use reqwest::header::{ACCEPT, AUTHORIZATION};
 use serde_json;
 use std::env;
+use std::fs;
 use std::io::Cursor;
 use std::io::Read;
+use std::io::Write;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::Duration;
 use tar::Archive;
 use time::OffsetDateTime;
@@ -34,94 +39,108 @@ function evaluatePixel(samples) {
 }"#;
 
 pub struct Sentinel {
-    cache: PathBuf,
-    download_lock: tokio::sync::Mutex<u8>,
+    cache_dir: PathBuf,
+    cache_tx: mpsc::Sender<(
+        cache::Request,
+        Box<dyn FnOnce() -> cache::CacheResult + Send>,
+    )>,
 }
 
 impl Sentinel {
-    pub fn new(cache: PathBuf) -> Self {
+    pub fn new(cache_dir: PathBuf) -> Self {
+        let cache = cache::Cache::from_existing_directory(cache_dir.clone()).unwrap();
+        let cache_tx = cache::run_cache(cache);
         Sentinel {
-            cache,
-            download_lock: tokio::sync::Mutex::new(0),
+            cache_dir,
+            cache_tx,
         }
     }
 
-    // pub async fn get(&self, point: tile::GeoPoint) -> Result<PathBuf> {
-    //     let id = srtm_id(point);
-    //     self.get_tile(&id).await
-    // }
-
-    pub async fn get(&self, zoom: u8, x: u32, y: u32) -> Result<(String, Vec<u8>)> {
-        let nw = tile::square_to_meters(&tile::tile_to_square(zoom, x as f64, y as f64));
-        let se =
-            tile::square_to_meters(&tile::tile_to_square(zoom, x as f64 + 1.0, y as f64 + 1.0));
-        let now = OffsetDateTime::now_utc();
-        let before = now - Duration::from_secs(3600 * 24 * 30);
-        let request = format_request(nw.x, se.y, se.x, nw.y, before, now, 15.0);
-        let (meta, image) = self.download(request).await?;
-        let date = self.extract_date(&meta)?;
-        let new_image = add_text(&image, &date)?;
-        Ok((date, new_image))
-    }
-
-    async fn download(&self, request: String) -> Result<(String, Vec<u8>)> {
-        println!("request {}", request);
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(180))
-            .build()?;
-        let form = reqwest::multipart::Form::new()
-            .text("request", request)
-            .text("evalscript", IMAGE_SCRIPT);
-        let token = env::var("FLYTILE_SENTINEL_TOKEN")?;
-        let to_send = client
-            .post(URL)
-            .header(AUTHORIZATION, format!("Bearer {}", token))
-            .header(ACCEPT, "application/tar")
-            .multipart(form)
-            .build()?;
-
-        println!("head {:?}", to_send.headers());
-        println!("body {:?}", to_send.body());
-        let response = client.execute(to_send).await?;
-        println!();
-        println!("status {:?}", response.status());
-        println!("head {:?}", response.headers());
-        println!("url {:?}", response.url());
-        response.error_for_status_ref()?;
-
-        let content = Cursor::new(response.bytes().await?);
-        let mut archive = Archive::new(content);
-        let entries = archive.entries()?;
-        let mut image = Vec::new();
-        let mut meta = String::new();
-        for maybe_entry in entries {
-            let mut entry = maybe_entry?;
-            let path = entry.path()?;
-            if path.to_string_lossy() == "default.png" {
-                println!("png bytes {}", entry.size());
-                entry.read_to_end(&mut image)?;
-            } else if path.to_string_lossy() == "userdata.json" {
-                println!("json bytes {}", entry.size());
-                entry.read_to_string(&mut meta)?;
-            }
-        }
-        // let image = archive.unpack("default.png")?;
-        // let meta = archive.unpack("userdata.json");
-        // let mut file = fs::File::create(&output)?;
-        // io::copy(&mut content, &mut file)?;
-        // return Ok(output.to_path_buf());
-        // Ok((meta, image))
-        Ok((meta, image))
-    }
-
-    fn extract_date(&self, meta: &str) -> Result<String> {
-        let json: serde_json::Value = serde_json::from_str(meta)?;
-        let date = json["scenes"][0]["dateFrom"].as_str().context("oops")?;
-        Ok(date[..10].to_string())
+    pub async fn get(&self, zoom: u8, x: u32, y: u32) -> Result<PathBuf> {
+        let key = format!("{}_{}_{}.png", zoom, x, y).into();
+        let out_path = self.cache_dir.join(&key);
+        let generator = move || generate_tile(out_path, zoom, x, y);
+        let (tx, rx) = mpsc::channel();
+        self.cache_tx
+            .send((cache::Request { key, send_back: tx }, Box::new(generator)))
+            .unwrap();
+        Ok(rx.recv()??)
     }
 }
 
-fn add_text(image: &[u8], text: &str) -> Result<Vec<u8>> {
+fn generate_tile(out_path: PathBuf, zoom: u8, x: u32, y: u32) -> cache::CacheResult {
+    let nw = tile::square_to_meters(&tile::tile_to_square(zoom, x as f64, y as f64));
+    let se = tile::square_to_meters(&tile::tile_to_square(zoom, x as f64 + 1.0, y as f64 + 1.0));
+    let now = OffsetDateTime::now_utc();
+    let before = now - Duration::from_secs(3600 * 24 * 30);
+    let request = format_request(nw.x, se.y, se.x, nw.y, before, now, 15.0);
+    let (meta, image) = download(request)?;
+    let date = extract_date(&meta)?;
+    let new_image = add_text(&image, &date)?;
+    let mut outfile = fs::File::create(&out_path).unwrap();
+    outfile.write_all(&new_image)?;
+    Ok(out_path)
+}
+
+fn extract_date(meta: &str) -> std::result::Result<String, ProcessingError> {
+    let json: serde_json::Value = serde_json::from_str(meta)?;
+    let date = json["scenes"][0]["dateFrom"]
+        .as_str()
+        .ok_or(ProcessingError)?;
+    Ok(date[..10].to_string())
+}
+
+fn download(request: String) -> std::result::Result<(String, Vec<u8>), ProcessingError> {
+    println!("request {}", request);
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()?;
+    let form = reqwest::blocking::multipart::Form::new()
+        .text("request", request)
+        .text("evalscript", IMAGE_SCRIPT);
+    let token = env::var("FLYTILE_SENTINEL_TOKEN")?;
+    let to_send = client
+        .post(URL)
+        .header(AUTHORIZATION, format!("Bearer {}", token))
+        .header(ACCEPT, "application/tar")
+        .multipart(form)
+        .build()?;
+
+    println!("head {:?}", to_send.headers());
+    println!("body {:?}", to_send.body());
+    let response = client.execute(to_send)?;
+    println!();
+    println!("status {:?}", response.status());
+    println!("head {:?}", response.headers());
+    println!("url {:?}", response.url());
+    response.error_for_status_ref()?;
+
+    let content = Cursor::new(response.bytes()?);
+    let mut archive = Archive::new(content);
+    let entries = archive.entries()?;
+    let mut image = Vec::new();
+    let mut meta = String::new();
+    for maybe_entry in entries {
+        let mut entry = maybe_entry?;
+        let path = entry.path()?;
+        if path.to_string_lossy() == "default.png" {
+            println!("png bytes {}", entry.size());
+            entry.read_to_end(&mut image)?;
+        } else if path.to_string_lossy() == "userdata.json" {
+            println!("json bytes {}", entry.size());
+            entry.read_to_string(&mut meta)?;
+        }
+    }
+    // let image = archive.unpack("default.png")?;
+    // let meta = archive.unpack("userdata.json");
+    // let mut file = fs::File::create(&output)?;
+    // io::copy(&mut content, &mut file)?;
+    // return Ok(output.to_path_buf());
+    // Ok((meta, image))
+    Ok((meta, image))
+}
+
+fn add_text(image: &[u8], text: &str) -> std::result::Result<Vec<u8>, ProcessingError> {
     let mut tmp = ImageReader::new(Cursor::new(image))
         .with_guessed_format()?
         .decode()?;
@@ -199,10 +218,8 @@ fn format_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use std::path::Path;
     use time::macros::datetime;
-    use tokio::runtime::Runtime;
 
     #[test]
     fn test_format() {
@@ -222,12 +239,8 @@ mod tests {
     }
     #[test]
     fn test_get() {
-        let runtime = Runtime::new().unwrap();
-        let sentinel = Sentinel::new(Path::new("/tmp").into());
-        let (meta, image) = runtime.block_on(sentinel.get(12, 669, 1396)).unwrap();
-        println!("meta {}", meta);
-        println!("image bytes {}", image.len());
-        fs::write("test.png", image).unwrap();
-        assert!(false);
+        let path = Path::new("/tmp/sentinel_12_669_1396.png").to_path_buf();
+        let _ = generate_tile(path.clone(), 12, 669, 1396).unwrap();
+        assert!(path.exists());
     }
 }

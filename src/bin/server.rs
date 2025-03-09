@@ -46,7 +46,7 @@ async fn slope_tiles(
 }
 
 #[get("/<zoom>/<x>/<y_with_extension>")]
-async fn image_tiles(zoom: u8, x: u32, y_with_extension: &str) -> Option<(ContentType, Vec<u8>)> {
+async fn image_tiles(zoom: u8, x: u32, y_with_extension: &str) -> Option<NamedFile> {
     if zoom < 10 || zoom > 14 {
         // todo support coarser zoom levels using coarser source data
         return None;
@@ -57,6 +57,6 @@ async fn image_tiles(zoom: u8, x: u32, y_with_extension: &str) -> Option<(Conten
         .parse::<u32>()
         .unwrap();
     let processor = sentinel::Sentinel::new(path::Path::new("/tmp").into());
-    let (_, image) = processor.get(zoom, x, y).await.unwrap();
-    Some((ContentType::PNG, image))
+    let path = processor.get(zoom, x, y).await.unwrap();
+    NamedFile::open(&path).await.ok()
 }

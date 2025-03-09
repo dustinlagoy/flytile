@@ -1,3 +1,4 @@
+use crate::processing::ProcessingError;
 use anyhow::Result;
 use reqwest;
 use reqwest::header::ToStrError;
@@ -25,6 +26,11 @@ impl std::fmt::Display for GeneratorError {
         write!(f, "generator error")
     }
 }
+impl From<ProcessingError> for GeneratorError {
+    fn from(_: ProcessingError) -> Self {
+        GeneratorError
+    }
+}
 impl From<reqwest::Error> for GeneratorError {
     fn from(_: reqwest::Error) -> Self {
         GeneratorError
@@ -48,7 +54,7 @@ impl From<std::io::Error> for GeneratorError {
 
 pub type CacheResult = StdResult<PathBuf, GeneratorError>;
 type SendBack = mpsc::Sender<CacheResult>;
-// type GetBack = mpsc::Receiver<CacheResult>;
+type GetBack = mpsc::Receiver<CacheResult>;
 
 #[derive(Debug)]
 pub struct Request {

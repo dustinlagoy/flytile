@@ -5,7 +5,6 @@ use flytile::slope;
 use flytile::srtm;
 use flytile::tile;
 use rocket::fs::NamedFile;
-use rocket::http::ContentType;
 use rocket::State;
 use std::env;
 use std::path;
@@ -16,6 +15,9 @@ fn rocket() -> _ {
     rocket::build()
         .manage(srtm::SRTM::new(path::Path::new(&cache).join("srtm")))
         .manage(slope::Pipeline::new(path::Path::new(&cache).join("slope")))
+        .manage(sentinel::Sentinel::new(
+            path::Path::new("/tmp").join("sentinel"),
+        ))
         .mount("/slope", routes![slope_tiles])
         .mount("/imagery/latest", routes![image_tiles])
 }
@@ -46,7 +48,12 @@ async fn slope_tiles(
 }
 
 #[get("/<zoom>/<x>/<y_with_extension>")]
-async fn image_tiles(zoom: u8, x: u32, y_with_extension: &str) -> Option<NamedFile> {
+async fn image_tiles(
+    provider: &State<sentinel::Sentinel>,
+    zoom: u8,
+    x: u32,
+    y_with_extension: &str,
+) -> Option<NamedFile> {
     if zoom < 10 || zoom > 14 {
         // todo support coarser zoom levels using coarser source data
         return None;
@@ -56,7 +63,6 @@ async fn image_tiles(zoom: u8, x: u32, y_with_extension: &str) -> Option<NamedFi
         .unwrap()
         .parse::<u32>()
         .unwrap();
-    let processor = sentinel::Sentinel::new(path::Path::new("/tmp").into());
-    let path = processor.get(zoom, x, y).await.unwrap();
+    let path = provider.get(zoom, x, y).await.unwrap();
     NamedFile::open(&path).await.ok()
 }

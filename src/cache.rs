@@ -129,14 +129,16 @@ impl Cache {
         let mut items = collections::HashMap::new();
         log::info!("build cache from {:?}", path);
         add_all(&path, &Path::new(""), &mut items)?;
-        Ok(Cache {
+        let result = Cache {
             cache: path,
             items,
             _max_size_bytes: 10_000_000_000,
             _item_timeout: time::Duration::from_secs(86400),
             in_progress: collections::HashMap::new(),
             to_return: collections::HashMap::new(),
-        })
+        };
+        log::debug!("generated cache: {:?}", result);
+        Ok(result)
     }
 
     pub fn get(&self, key: &PathBuf) -> Option<&PathBuf> {

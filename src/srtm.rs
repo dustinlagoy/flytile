@@ -177,6 +177,7 @@ pub fn srtm_id(point: &tile::GeoPoint) -> String {
     } else {
         output.push_str(&format!("W{:03}", point.longitude.abs().ceil()));
     }
+    output.push_str(".hgt");
     output
 }
 

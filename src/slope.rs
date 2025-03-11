@@ -32,11 +32,12 @@ impl Pipeline {
             fs::create_dir_all(output_dir)?;
         }
         if !output.exists() {
+            log::info!("make shaded slope tile {} {} {}", zoom, x, y);
             let vrt_file = NamedTempFile::new()?;
             let vrt_path = vrt_file.path().to_path_buf();
             make_vrt(elevations, &vrt_path)?;
             let elevation_tile = tile::single_tile(vrt_path, zoom, x as f64, y as f64).unwrap();
-            println!("elevation tile {:?}", elevation_tile);
+            log::debug!("have elevation tile {:?}", elevation_tile);
             // scale slope by cosine of tile center latitude since this is a conformal projection
             // from John P. Snyder https://doi.org/10.3133/pp1395
             // see below test for maximum error of this approximation (1 percent at zoom level 8)
@@ -46,11 +47,12 @@ impl Pipeline {
                 y as f64 + 0.5,
             ));
             let slope = slope(elevation_tile, tile_center.latitude.to_radians().cos())?;
-            println!("slope {:?}", slope);
+            log::debug!("have slope tile {:?}", slope);
             angle_shade(&slope, &output)?;
-            println!("shade {:?}", output);
+            log::debug!("have shaded tile {:?}", output);
         }
         if output.exists() {
+            log::info!("return generated slope tile {:?}", output);
             return Ok(output);
         }
         return Err(anyhow!("could not process slope data"));

@@ -86,12 +86,12 @@ fn extract_date(meta: &str) -> std::result::Result<String, ProcessingError> {
     let json: serde_json::Value = serde_json::from_str(meta)?;
     let date = json["scenes"][0]["dateFrom"]
         .as_str()
-        .ok_or(ProcessingError)?;
+        .ok_or(ProcessingError::new("can not convert date"))?;
     Ok(date[..10].to_string())
 }
 
 fn download(request: String) -> std::result::Result<(String, Vec<u8>), ProcessingError> {
-    println!("request {}", request);
+    log::debug!("sentinel download request {}", request);
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(180))
         .build()?;
@@ -106,13 +106,12 @@ fn download(request: String) -> std::result::Result<(String, Vec<u8>), Processin
         .multipart(form)
         .build()?;
 
-    println!("head {:?}", to_send.headers());
-    println!("body {:?}", to_send.body());
+    log::debug!("send headers {:?}", to_send.headers());
+    log::debug!("send body {:?}", to_send.body());
     let response = client.execute(to_send)?;
-    println!();
-    println!("status {:?}", response.status());
-    println!("head {:?}", response.headers());
-    println!("url {:?}", response.url());
+    log::debug!("response status {:?}", response.status());
+    log::debug!("response headers {:?}", response.headers());
+    log::debug!("response url {:?}", response.url());
     response.error_for_status_ref()?;
 
     let content = Cursor::new(response.bytes()?);
@@ -124,10 +123,10 @@ fn download(request: String) -> std::result::Result<(String, Vec<u8>), Processin
         let mut entry = maybe_entry?;
         let path = entry.path()?;
         if path.to_string_lossy() == "default.png" {
-            println!("png bytes {}", entry.size());
+            log::debug!("png bytes {}", entry.size());
             entry.read_to_end(&mut image)?;
         } else if path.to_string_lossy() == "userdata.json" {
-            println!("json bytes {}", entry.size());
+            log::debug!("json bytes {}", entry.size());
             entry.read_to_string(&mut meta)?;
         }
     }

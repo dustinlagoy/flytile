@@ -39,10 +39,11 @@ async fn slope_tiles(
         .unwrap()
         .parse::<u32>()
         .unwrap();
+    log::info!("generating srtm slope tile {} {} {}", zoom, x, y);
     let bounds = tile::tile_bounds(zoom, x, y);
-    println!("tile bounds {:?}", bounds);
+    log::debug!("tile bounds {:?}", bounds);
     let elevations = elev.get_all(bounds).await.unwrap();
-    println!("elevations {:?}", elevations);
+    log::debug!("elevations {:?}", elevations);
     let shade = pipe.get(&elevations, zoom, x, y).await.unwrap();
     NamedFile::open(&shade).await.ok()
 }
@@ -63,6 +64,7 @@ async fn image_tiles(
         .unwrap()
         .parse::<u32>()
         .unwrap();
+    log::info!("generating sentinel imagery tile {} {} {}", zoom, x, y);
     let path = provider.get(zoom, x, y).await.unwrap();
     NamedFile::open(&path).await.ok()
 }

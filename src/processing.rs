@@ -1,41 +1,63 @@
 use serde_json;
 
-#[derive(Debug, Clone, Copy)]
-pub struct ProcessingError;
+#[derive(Debug, Clone)]
+pub struct ProcessingError {
+    message: String,
+}
+
+impl ProcessingError {
+    pub fn new(message: &str) -> Self {
+        ProcessingError {
+            message: message.into(),
+        }
+    }
+}
 
 impl std::error::Error for ProcessingError {}
 impl std::fmt::Display for ProcessingError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "processing error")
+        write!(f, "processing error: {}", self.message)
     }
 }
 impl From<std::io::Error> for ProcessingError {
     fn from(_: std::io::Error) -> Self {
-        ProcessingError
+        ProcessingError {
+            message: format!("io"),
+        }
     }
 }
 impl From<std::env::VarError> for ProcessingError {
     fn from(_: std::env::VarError) -> Self {
-        ProcessingError
+        ProcessingError {
+            message: format!("env"),
+        }
     }
 }
 impl From<serde_json::Error> for ProcessingError {
     fn from(_: serde_json::Error) -> Self {
-        ProcessingError
+        ProcessingError {
+            message: format!("serde"),
+        }
     }
 }
 impl From<reqwest::Error> for ProcessingError {
-    fn from(_: reqwest::Error) -> Self {
-        ProcessingError
+    fn from(error: reqwest::Error) -> Self {
+        ProcessingError {
+            message: format!("reqwest: {}", error),
+        }
     }
 }
 impl From<image::ImageError> for ProcessingError {
     fn from(_: image::ImageError) -> Self {
-        ProcessingError
+        ProcessingError {
+            message: format!("image"),
+        }
     }
 }
 impl From<ab_glyph::InvalidFont> for ProcessingError {
     fn from(_: ab_glyph::InvalidFont) -> Self {
-        ProcessingError
+        ProcessingError {
+            message: format!("io"),
+        }
     }
 }

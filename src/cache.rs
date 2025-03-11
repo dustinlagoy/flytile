@@ -17,38 +17,58 @@ pub enum MaybePath {
     NotAvailable(PathBuf),
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct GeneratorError;
+#[derive(Debug, Clone)]
+pub struct GeneratorError {
+    message: String,
+}
+
+impl GeneratorError {
+    pub fn new(message: &str) -> Self {
+        GeneratorError {
+            message: message.into(),
+        }
+    }
+}
 
 impl std::error::Error for GeneratorError {}
 impl std::fmt::Display for GeneratorError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "generator error")
+        write!(f, "generator error: {}", self.message)
     }
 }
 impl From<ProcessingError> for GeneratorError {
-    fn from(_: ProcessingError) -> Self {
-        GeneratorError
+    fn from(error: ProcessingError) -> Self {
+        GeneratorError {
+            message: format!("{}", error),
+        }
     }
 }
 impl From<reqwest::Error> for GeneratorError {
-    fn from(_: reqwest::Error) -> Self {
-        GeneratorError
+    fn from(error: reqwest::Error) -> Self {
+        GeneratorError {
+            message: format!("reqwest: {}", error),
+        }
     }
 }
 impl From<std::env::VarError> for GeneratorError {
     fn from(_: std::env::VarError) -> Self {
-        GeneratorError
+        GeneratorError {
+            message: format!("env"),
+        }
     }
 }
 impl From<ToStrError> for GeneratorError {
     fn from(_: ToStrError) -> Self {
-        GeneratorError
+        GeneratorError {
+            message: format!("tostr"),
+        }
     }
 }
 impl From<std::io::Error> for GeneratorError {
     fn from(_: std::io::Error) -> Self {
-        GeneratorError
+        GeneratorError {
+            message: format!("io"),
+        }
     }
 }
 
@@ -94,18 +114,20 @@ fn cache_thread(
     rx: mpsc::Receiver<(Request, Box<dyn FnOnce() -> CacheResult + Send>)>,
 ) {
     loop {
-        // can also receive the results of getters
+        // TODO also receive the results of getters, then there is no reason to sleep
         if let Ok(todo) = rx.try_recv() {
-            println!("{:?}", todo.0);
+            log::info!("cache processing {:?}", todo.0);
             cache.try_get(todo.0, todo.1);
         }
         cache.check();
+        thread::sleep(time::Duration::from_millis(1));
     }
 }
 
 impl Cache {
     pub fn from_existing_directory(path: PathBuf) -> Result<Self> {
         let mut items = collections::HashMap::new();
+        log::info!("build cache from {:?}", path);
         add_all(&path, &Path::new(""), &mut items)?;
         Ok(Cache {
             cache: path,
@@ -127,14 +149,17 @@ impl Cache {
     {
         if let Some(path) = self.items.get(&get.key) {
             // immediately return item if in cache
+            log::info!("return item from cache {:?}", get.key);
             get.send_back.send(Ok(path.clone())).unwrap();
         } else {
             if self.in_progress.get(&get.key).is_none() {
                 // execute generator if no one already generating this item
+                log::info!("generate item {:?}", get.key);
                 self.in_progress
                     .insert(get.key.clone(), thread::spawn(move || generator()));
             }
             // add caller to list of askers waiting for result
+            log::info!("wait for generating item {:?}", get.key);
             if let Some(vector) = self.to_return.get_mut(&get.key) {
                 vector.push(get.send_back);
             } else {

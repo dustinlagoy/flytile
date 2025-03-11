@@ -17,11 +17,11 @@ extern crate reqwest;
 fn redirect_with_auth_and_cookies(
     url: &str,
 ) -> std::result::Result<reqwest::blocking::Response, cache::GeneratorError> {
-    println!("retrieving {}", url);
+    log::debug!("retrieving {}", url);
     let password = env::var("FLYTILE_SRTM_PASSWORD")?;
     let mut jar = Some(reqwest::cookie::Jar::default());
     let mut new_url = url.to_string();
-    for i in 0..10 {
+    for _i in 0..10 {
         let client = reqwest::blocking::Client::builder()
             .cookie_provider(std::sync::Arc::new(jar.take().unwrap()))
             .redirect(reqwest::redirect::Policy::none())
@@ -31,10 +31,9 @@ fn redirect_with_auth_and_cookies(
             .get(&new_url)
             .basic_auth("dustin.lagoy", Some(&password))
             .send()?;
-        println!();
-        println!("{} status {:?}", i, response.status());
-        println!("{} head {:?}", i, response.headers());
-        println!("{} url {:?}", i, response.url());
+        log::debug!("response status {:?}", response.status());
+        log::debug!("response headers {:?}", response.headers());
+        log::debug!("response url {:?}", response.url());
         if response.status() == 200 {
             return Ok(response);
         }
@@ -44,12 +43,12 @@ fn redirect_with_auth_and_cookies(
         let tmp_jar = reqwest::cookie::Jar::default();
         for cookie in response.headers().get_all(reqwest::header::SET_COOKIE) {
             let cookie_url = response.url();
-            println!("add cookie {} for {}", cookie.to_str()?, &cookie_url);
+            log::debug!("add cookie {} for {}", cookie.to_str()?, &cookie_url);
             tmp_jar.add_cookie_str(cookie.to_str()?, &cookie_url);
         }
         jar = Some(tmp_jar);
     }
-    return Err(cache::GeneratorError);
+    return Err(cache::GeneratorError::new("too many redirects"));
 }
 
 pub struct SRTM {
@@ -64,9 +63,7 @@ pub struct SRTM {
 impl SRTM {
     pub fn new(cache_dir: PathBuf) -> Self {
         let cache = cache::Cache::from_existing_directory(cache_dir.clone()).unwrap();
-        println!("run cache");
         let tx = cache::run_cache(cache);
-        println!("done run cache");
         SRTM {
             cache_dir,
             cache_tx: tx,
@@ -75,7 +72,8 @@ impl SRTM {
     }
 
     pub async fn get(&self, point: tile::GeoPoint) -> Result<PathBuf> {
-        let id = srtm_id(point);
+        let id = srtm_id(&point);
+        log::debug!("get srtm {} for point {:?}", id, point);
         self.get_tile(&id).await
     }
 
@@ -119,16 +117,14 @@ impl SRTM {
             .max(bounds.north_east.latitude)
             .ceil() as i32;
         let mut files = vec![];
-        // println!("bounds {:?}", bounds);
-        // println!("lon {} {}", min_lon, max_lon);
-        // println!("lat {} {}", min_lat, max_lat);
+        log::debug!("lon bounds {} {}", min_lon, max_lon);
+        log::debug!("lat bounds {} {}", min_lat, max_lat);
         for i in min_lon..max_lon {
             for j in min_lat..max_lat {
                 let point = tile::GeoPoint {
                     longitude: i as f64,
                     latitude: j as f64,
                 };
-                // println!("get file {} {} {}", i, j, id);
                 files.push(self.get(point).await?);
             }
         }
@@ -142,14 +138,16 @@ fn download_tile(output_directory: PathBuf, id: &str) -> cache::CacheResult {
         id
     );
     let zipfile = Path::new("/tmp").join(format!("{}.zip", id));
-    println!("downloading {}", url);
+    log::info!("downloading srtm image {}", id);
     let response = redirect_with_auth_and_cookies(&url)?;
     response.error_for_status_ref()?;
     let mut content = Cursor::new(response.bytes()?);
     let mut file = fs::File::create(&zipfile)?;
     io::copy(&mut content, &mut file)?;
     let mut outputs = extract(output_directory, zipfile);
-    return outputs.pop().ok_or(cache::GeneratorError);
+    return outputs
+        .pop()
+        .ok_or(cache::GeneratorError::new("no outputs"));
 }
 
 fn extract(output_directory: PathBuf, path: PathBuf) -> Vec<PathBuf> {
@@ -159,7 +157,7 @@ fn extract(output_directory: PathBuf, path: PathBuf) -> Vec<PathBuf> {
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).unwrap();
         let outpath = Path::new(&output_directory).join(file.enclosed_name().unwrap());
-        println!("extracting {:?}", outpath);
+        log::debug!("extracting {:?}", outpath);
         let mut outfile = fs::File::create(&outpath).unwrap();
         io::copy(&mut file, &mut outfile).unwrap();
         outputs.push(outpath);
@@ -167,7 +165,7 @@ fn extract(output_directory: PathBuf, path: PathBuf) -> Vec<PathBuf> {
     outputs
 }
 
-pub fn srtm_id(point: tile::GeoPoint) -> String {
+pub fn srtm_id(point: &tile::GeoPoint) -> String {
     let mut output = String::from("");
     if point.latitude >= 0.0 {
         output.push_str(&format!("N{:02}", point.latitude.floor()));
@@ -188,12 +186,12 @@ mod tests {
 
     #[test]
     fn test_id() {
-        let id = srtm_id(tile::GeoPoint {
+        let id = srtm_id(&tile::GeoPoint {
             latitude: 44.6474,
             longitude: -121.5847,
         });
         assert_eq!(id, "N44W122");
-        let id = srtm_id(tile::GeoPoint {
+        let id = srtm_id(&tile::GeoPoint {
             latitude: -4.11909,
             longitude: 22.55864,
         });
@@ -202,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_download() {
-        let id = srtm_id(tile::GeoPoint {
+        let id = srtm_id(&tile::GeoPoint {
             longitude: -120.0,
             latitude: 50.0,
         });

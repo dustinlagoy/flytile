@@ -1,6 +1,7 @@
 use crate::cache;
 use crate::processing::ProcessingError;
 use crate::tile;
+use crate::token;
 use anyhow::Result;
 use image::ImageFormat;
 use image::ImageReader;
@@ -20,6 +21,8 @@ use tar::Archive;
 use time::OffsetDateTime;
 
 const URL: &'static str = "https://sh.dataspace.copernicus.eu/api/v1/process";
+const TOKEN_URL: &'static str =
+    "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token";
 const IMAGE_SCRIPT: &'static str = r#"//VERSION=3
 
 function setup() {
@@ -44,22 +47,24 @@ pub struct Sentinel {
         cache::Request,
         Box<dyn FnOnce() -> cache::CacheResult + Send>,
     )>,
+    token_generator: token::Generator,
 }
 
 impl Sentinel {
     pub fn new(cache_dir: PathBuf) -> Self {
         let cache = cache::Cache::from_existing_directory(cache_dir.clone()).unwrap();
-        let cache_tx = cache::run_cache(cache);
         Sentinel {
             cache_dir,
-            cache_tx,
+            cache_tx: cache::run_cache(cache),
+            token_generator: token::Generator::new(TOKEN_URL),
         }
     }
 
     pub async fn get(&self, zoom: u8, x: u32, y: u32) -> Result<PathBuf> {
         let key = format!("{}_{}_{}.png", zoom, x, y).into();
         let out_path = self.cache_dir.join(&key);
-        let generator = move || generate_tile(out_path, zoom, x, y);
+        let token = self.token_generator.get().await?;
+        let generator = move || generate_tile(out_path, zoom, x, y, token);
         let (tx, rx) = mpsc::channel();
         self.cache_tx
             .send((cache::Request { key, send_back: tx }, Box::new(generator)))
@@ -68,13 +73,13 @@ impl Sentinel {
     }
 }
 
-fn generate_tile(out_path: PathBuf, zoom: u8, x: u32, y: u32) -> cache::CacheResult {
+fn generate_tile(out_path: PathBuf, zoom: u8, x: u32, y: u32, token: String) -> cache::CacheResult {
     let nw = tile::square_to_meters(&tile::tile_to_square(zoom, x as f64, y as f64));
     let se = tile::square_to_meters(&tile::tile_to_square(zoom, x as f64 + 1.0, y as f64 + 1.0));
     let now = OffsetDateTime::now_utc();
     let before = now - Duration::from_secs(3600 * 24 * 30);
     let request = format_request(nw.x, se.y, se.x, nw.y, before, now, 15.0);
-    let (meta, image) = download(request)?;
+    let (meta, image) = download(request, token)?;
     let date = extract_date(&meta)?;
     let new_image = add_text(&image, &date)?;
     let mut outfile = fs::File::create(&out_path).unwrap();
@@ -90,7 +95,10 @@ fn extract_date(meta: &str) -> std::result::Result<String, ProcessingError> {
     Ok(date[..10].to_string())
 }
 
-fn download(request: String) -> std::result::Result<(String, Vec<u8>), ProcessingError> {
+fn download(
+    request: String,
+    token: String,
+) -> std::result::Result<(String, Vec<u8>), ProcessingError> {
     log::debug!("sentinel download request {}", request);
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(180))
@@ -98,7 +106,6 @@ fn download(request: String) -> std::result::Result<(String, Vec<u8>), Processin
     let form = reqwest::blocking::multipart::Form::new()
         .text("request", request)
         .text("evalscript", IMAGE_SCRIPT);
-    let token = env::var("FLYTILE_SENTINEL_TOKEN")?;
     let to_send = client
         .post(URL)
         .header(AUTHORIZATION, format!("Bearer {}", token))

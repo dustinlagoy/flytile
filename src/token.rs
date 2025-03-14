@@ -35,33 +35,35 @@ impl std::fmt::Display for Token {
 
 pub struct Generator {
     url: String,
-    token: Option<Token>,
+    token: tokio::sync::Mutex<Token>,
 }
 
 impl Generator {
     pub fn new<T: Into<String>>(url: T) -> Self {
         Generator {
             url: url.into(),
-            token: None,
+            token: tokio::sync::Mutex::new(Token {
+                access_token: "".to_string(),
+                expiration: time::Instant::now(),
+            }),
         }
     }
 
-    pub fn get(&mut self) -> std::result::Result<String, ProcessingError> {
+    pub async fn get(&self) -> std::result::Result<String, ProcessingError> {
         // TODO: use message passing for token requests
-        if self
-            .token
-            .as_ref()
-            .is_none_or(|x| (x.expiration - time::Instant::now()).as_secs() < 15)
-        {
-            // regenerate if token is missing or about to expire
-            self.token = Some(self.generate()?);
+        let mut token = self.token.lock().await;
+        let expires_in = (token.expiration - time::Instant::now()).as_secs();
+        if expires_in < 15 {
+            // regenerate if token is about to expire
+            log::info!("regenerate token (current expires in {} s)", expires_in);
+            *token = self.generate().await?;
         }
-        Ok(self.token.as_ref().unwrap().access_token.clone())
+        Ok(token.access_token.clone())
     }
 
-    fn generate(&self) -> std::result::Result<Token, ProcessingError> {
+    async fn generate(&self) -> std::result::Result<Token, ProcessingError> {
         log::debug!("requesting token from {}", self.url);
-        let client = reqwest::blocking::Client::builder()
+        let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()?;
         // TODO: cache these?
@@ -76,12 +78,12 @@ impl Generator {
 
         log::debug!("send headers {:?}", to_send.headers());
         log::debug!("send body {:?}", to_send.body());
-        let response = client.execute(to_send)?;
+        let response = client.execute(to_send).await?;
         log::debug!("response status {:?}", response.status());
         log::debug!("response headers {:?}", response.headers());
         log::debug!("response url {:?}", response.url());
         response.error_for_status_ref()?;
-        let token = response.json::<Token>()?;
+        let token = response.json::<Token>().await?;
         log::debug!("received token {}", token);
         Ok(token)
     }

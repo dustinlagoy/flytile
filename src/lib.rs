@@ -10,3 +10,4 @@ pub mod sentinel;
 pub mod slope;
 pub mod srtm;
 pub mod tile;
+pub mod token;

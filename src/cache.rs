@@ -2,6 +2,8 @@ use crate::processing::ProcessingError;
 use anyhow::Result;
 use reqwest;
 use reqwest::header::ToStrError;
+use ringmap;
+use rocket::futures::future::maybe_done;
 use std::collections;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -83,10 +85,18 @@ pub struct Request {
 }
 
 #[derive(Debug)]
+pub struct Entry {
+    path: PathBuf,
+    bytes: u64,
+    created: time::SystemTime,
+}
+
+#[derive(Debug)]
 pub struct Cache {
     pub cache: PathBuf,
-    items: collections::HashMap<PathBuf, PathBuf>,
-    _max_size_bytes: usize,
+    items: ringmap::RingMap<PathBuf, Entry>,
+    size_bytes: u64,
+    _max_size_bytes: u64,
     _item_timeout: time::Duration,
     in_progress: collections::HashMap<PathBuf, thread::JoinHandle<CacheResult>>,
     to_return: collections::HashMap<PathBuf, Vec<SendBack>>,
@@ -126,12 +136,13 @@ fn cache_thread(
 
 impl Cache {
     pub fn from_existing_directory(path: PathBuf) -> Result<Self> {
-        let mut items = collections::HashMap::new();
+        let mut items = ringmap::RingMap::new();
         log::info!("build cache from {:?}", path);
-        add_all(&path, &Path::new(""), &mut items)?;
+        let size_bytes = add_all(&path, &Path::new(""), &mut items)?;
         let result = Cache {
             cache: path,
             items,
+            size_bytes,
             _max_size_bytes: 10_000_000_000,
             _item_timeout: time::Duration::from_secs(86400),
             in_progress: collections::HashMap::new(),
@@ -142,17 +153,20 @@ impl Cache {
     }
 
     pub fn get(&self, key: &PathBuf) -> Option<&PathBuf> {
-        return self.items.get(key);
+        match self.items.get(key) {
+            Some(value) => Some(&value.path),
+            _ => None,
+        }
     }
 
     pub fn try_get<F>(&mut self, get: Request, generator: F)
     where
         F: FnOnce() -> CacheResult + Send + 'static,
     {
-        if let Some(path) = self.items.get(&get.key) {
+        if let Some(entry) = self.items.get(&get.key) {
             // immediately return item if in cache
             log::info!("return item from cache {:?}", get.key);
-            get.send_back.send(Ok(path.clone())).unwrap();
+            get.send_back.send(Ok(entry.path.clone())).unwrap();
         } else {
             if self.in_progress.get(&get.key).is_none() {
                 // execute generator if no one already generating this item
@@ -186,9 +200,45 @@ impl Cache {
                 sender.send(result.clone()).unwrap();
             }
             if let Ok(value) = result {
-                self.items.insert(key.clone(), value);
+                let metadata = fs::metadata(&value).unwrap();
+                self.items.insert(
+                    key.clone(),
+                    Entry {
+                        path: value,
+                        bytes: metadata.len(),
+                        created: metadata.created().unwrap(),
+                    },
+                );
             }
         }
+    }
+
+    /// keep total size of self below max size
+    ///
+    /// removes up to step_bytes worth of items to avoid thrashing
+    fn shrink(&mut self, step_bytes: u64) {
+        if self.size_bytes > self._max_size_bytes {
+            while self.size_bytes > self._max_size_bytes - step_bytes {
+                self.remove_oldest();
+            }
+        }
+    }
+
+    fn expire(&mut self) {
+        // TODO remove unwraps
+        loop {
+            let (_key, oldest) = self.items.get_index(0).unwrap();
+            if oldest.created.elapsed().unwrap() > self._item_timeout {
+                self.remove_oldest();
+            }
+        }
+    }
+
+    fn remove_oldest(&mut self) {
+        // TODO remove unwraps
+        let (_key, entry) = self.items.pop_front().unwrap();
+        self.size_bytes -= entry.bytes;
+        std::fs::remove_file(entry.path).unwrap();
     }
 
     fn _is_expired(&self, full_path: PathBuf) -> bool {
@@ -211,18 +261,29 @@ impl Cache {
 fn add_all(
     cache: &Path,
     subpath: &Path,
-    items: &mut collections::HashMap<PathBuf, PathBuf>,
-) -> Result<()> {
-    for entry in fs::read_dir(cache.join(subpath))? {
-        let entry_path = entry?.path();
+    items: &mut ringmap::RingMap<PathBuf, Entry>,
+) -> Result<u64> {
+    let mut size = 0;
+    for maybe_entry in fs::read_dir(cache.join(subpath))? {
+        let entry = maybe_entry?;
+        let entry_path = entry.path();
         if entry_path.is_dir() {
             add_all(cache, &entry_path.strip_prefix(cache)?, items)?;
         } else {
             let key = entry_path.strip_prefix(cache)?;
-            items.insert(key.to_path_buf(), entry_path);
+            let metadata = entry.metadata()?;
+            size += metadata.len();
+            items.insert(
+                key.to_path_buf(),
+                Entry {
+                    path: entry_path,
+                    bytes: metadata.len(),
+                    created: metadata.created()?,
+                },
+            );
         }
     }
-    Ok(())
+    Ok(size)
 }
 
 #[cfg(test)]

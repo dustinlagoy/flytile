@@ -52,7 +52,13 @@ pub struct Sentinel {
 
 impl Sentinel {
     pub fn new(cache_dir: PathBuf) -> Self {
-        let cache = cache::Cache::from_existing_directory(cache_dir.clone()).unwrap();
+        let cache = cache::Cache::from_existing_directory(
+            cache_dir.clone(),
+            10_000_000_000,
+            100_000_000,
+            86400,
+        )
+        .unwrap();
         Sentinel {
             cache_dir,
             cache_tx: cache::run_cache(cache),
@@ -246,7 +252,10 @@ mod tests {
     #[test]
     fn test_get() {
         let path = Path::new("/tmp/sentinel_12_669_1396.png").to_path_buf();
-        let _ = generate_tile(path.clone(), 12, 669, 1396).unwrap();
+        let token_generator = token::Generator::new(TOKEN_URL);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let token = runtime.block_on(token_generator.get()).unwrap();
+        let _ = generate_tile(path.clone(), 12, 669, 1396, token).unwrap();
         assert!(path.exists());
     }
 }

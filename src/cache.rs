@@ -3,7 +3,6 @@ use anyhow::Result;
 use reqwest;
 use reqwest::header::ToStrError;
 use ringmap;
-use rocket::futures::future::maybe_done;
 use std::collections;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -96,8 +95,9 @@ pub struct Cache {
     pub cache: PathBuf,
     items: ringmap::RingMap<PathBuf, Entry>,
     size_bytes: u64,
-    _max_size_bytes: u64,
-    _item_timeout: time::Duration,
+    max_size_bytes: u64,
+    shrink_step_bytes: u64,
+    item_timeout: time::Duration,
     in_progress: collections::HashMap<PathBuf, thread::JoinHandle<CacheResult>>,
     to_return: collections::HashMap<PathBuf, Vec<SendBack>>,
 }
@@ -130,12 +130,18 @@ fn cache_thread(
             cache.try_get(todo.0, todo.1);
         }
         cache.check();
+        cache.cleanup();
         thread::sleep(time::Duration::from_millis(1));
     }
 }
 
 impl Cache {
-    pub fn from_existing_directory(path: PathBuf) -> Result<Self> {
+    pub fn from_existing_directory(
+        path: PathBuf,
+        max_size_bytes: u64,
+        shrink_step_bytes: u64,
+        age_limit_seconds: u64,
+    ) -> Result<Self> {
         let mut items = ringmap::RingMap::new();
         log::info!("build cache from {:?}", path);
         let size_bytes = add_all(&path, &Path::new(""), &mut items)?;
@@ -143,8 +149,9 @@ impl Cache {
             cache: path,
             items,
             size_bytes,
-            _max_size_bytes: 10_000_000_000,
-            _item_timeout: time::Duration::from_secs(86400),
+            max_size_bytes,
+            shrink_step_bytes,
+            item_timeout: time::Duration::from_secs(age_limit_seconds),
             in_progress: collections::HashMap::new(),
             to_return: collections::HashMap::new(),
         };
@@ -163,10 +170,10 @@ impl Cache {
     where
         F: FnOnce() -> CacheResult + Send + 'static,
     {
-        if let Some(entry) = self.items.get(&get.key) {
+        if let Some(path) = self.get(&get.key) {
             // immediately return item if in cache
             log::info!("return item from cache {:?}", get.key);
-            get.send_back.send(Ok(entry.path.clone())).unwrap();
+            get.send_back.send(Ok(path.clone())).unwrap();
         } else {
             if self.in_progress.get(&get.key).is_none() {
                 // execute generator if no one already generating this item
@@ -201,11 +208,13 @@ impl Cache {
             }
             if let Ok(value) = result {
                 let metadata = fs::metadata(&value).unwrap();
+                let bytes = metadata.len();
+                self.size_bytes += bytes;
                 self.items.insert(
                     key.clone(),
                     Entry {
                         path: value,
-                        bytes: metadata.len(),
+                        bytes,
                         created: metadata.created().unwrap(),
                     },
                 );
@@ -213,12 +222,17 @@ impl Cache {
         }
     }
 
+    pub fn cleanup(&mut self) {
+        self.shrink();
+        self.expire();
+    }
+
     /// keep total size of self below max size
     ///
     /// removes up to step_bytes worth of items to avoid thrashing
-    fn shrink(&mut self, step_bytes: u64) {
-        if self.size_bytes > self._max_size_bytes {
-            while self.size_bytes > self._max_size_bytes - step_bytes {
+    fn shrink(&mut self) {
+        if self.size_bytes > self.max_size_bytes {
+            while self.size_bytes > self.max_size_bytes - self.shrink_step_bytes {
                 self.remove_oldest();
             }
         }
@@ -227,34 +241,24 @@ impl Cache {
     fn expire(&mut self) {
         // TODO remove unwraps
         loop {
-            let (_key, oldest) = self.items.get_index(0).unwrap();
-            if oldest.created.elapsed().unwrap() > self._item_timeout {
-                self.remove_oldest();
+            if let Some((_key, oldest)) = self.items.get_index(0) {
+                if oldest.created.elapsed().unwrap() > self.item_timeout {
+                    self.remove_oldest();
+                } else {
+                    break;
+                }
+            } else {
+                break;
             }
         }
     }
 
     fn remove_oldest(&mut self) {
         // TODO remove unwraps
-        let (_key, entry) = self.items.pop_front().unwrap();
+        let (key, entry) = self.items.pop_front().unwrap();
+        log::debug!("removing cache item {:?}", key);
         self.size_bytes -= entry.bytes;
         std::fs::remove_file(entry.path).unwrap();
-    }
-
-    fn _is_expired(&self, full_path: PathBuf) -> bool {
-        let metadata = match fs::metadata(&full_path) {
-            Ok(x) => x,
-            _ => return true,
-        };
-        let created = match metadata.created() {
-            Ok(x) => x,
-            _ => return true,
-        };
-        let elapsed = match created.elapsed() {
-            Ok(x) => x,
-            _ => return false,
-        };
-        elapsed > self._item_timeout
     }
 }
 
@@ -301,19 +305,19 @@ mod tests {
         }
     }
 
-    fn insert_a(cache: &mut Cache, filename_override: &str) -> GetBack {
+    fn insert_item(cache: &mut Cache, path: &str, filename_override: &str) -> GetBack {
         let (tx, rx) = mpsc::channel();
         let cache_dir = cache.cache.clone();
         let filename = filename_override.to_string();
         let generator = move || {
             thread::sleep(time::Duration::from_millis(100));
             let full_path = cache_dir.join(&filename);
-            fs::write(&full_path, "a").unwrap();
+            fs::write(&full_path, "item").unwrap();
             return Ok(full_path);
         };
         cache.try_get(
             Request {
-                key: "a".into(),
+                key: path.into(),
                 send_back: tx,
             },
             generator,
@@ -328,7 +332,8 @@ mod tests {
         fs::write(dir.path().join("b"), "b").unwrap();
         fs::create_dir(dir.path().join("c")).unwrap();
         fs::write(dir.path().join("c").join("d"), "d").unwrap();
-        let cache = Cache::from_existing_directory(dir.path().to_path_buf()).unwrap();
+        let mut cache =
+            Cache::from_existing_directory(dir.path().to_path_buf(), 10_000, 100, 600).unwrap();
         println!("{:?}", cache);
         assert!(cache.get(&"a".into()).unwrap().ends_with("a"));
         assert!(cache.get(&"b".into()).unwrap().ends_with("b"));
@@ -341,7 +346,8 @@ mod tests {
     #[test]
     fn test_add_to_cache() {
         let dir = tempfile::tempdir().unwrap();
-        let mut cache = Cache::from_existing_directory(dir.path().to_path_buf()).unwrap();
+        let mut cache =
+            Cache::from_existing_directory(dir.path().to_path_buf(), 10_000, 100, 600).unwrap();
         assert!(cache.get(&"a".into()).is_none());
 
         let cache_dir = cache.cache.clone();
@@ -368,8 +374,9 @@ mod tests {
     #[test]
     fn test_wait_for_cache_add() {
         let dir = tempfile::tempdir().unwrap();
-        let mut cache = Cache::from_existing_directory(dir.path().to_path_buf()).unwrap();
-        let rx = insert_a(&mut cache, "a");
+        let mut cache =
+            Cache::from_existing_directory(dir.path().to_path_buf(), 10_000, 100, 600).unwrap();
+        let rx = insert_item(&mut cache, "a", "a");
         assert!(rx.try_recv().is_err());
         let result = check_until(&mut cache, rx).unwrap();
         assert!(result.ends_with("a"));
@@ -379,10 +386,11 @@ mod tests {
     #[test]
     fn test_run_generator_only_once() {
         let dir = tempfile::tempdir().unwrap();
-        let mut cache = Cache::from_existing_directory(dir.path().to_path_buf()).unwrap();
-        let rx_a = insert_a(&mut cache, "x");
-        let rx_b = insert_a(&mut cache, "y");
-        let rx_c = insert_a(&mut cache, "z");
+        let mut cache =
+            Cache::from_existing_directory(dir.path().to_path_buf(), 10_000, 100, 600).unwrap();
+        let rx_a = insert_item(&mut cache, "a", "x");
+        let rx_b = insert_item(&mut cache, "a", "y");
+        let rx_c = insert_item(&mut cache, "a", "z");
         // all the cache calls should return the result of the first generator
         let result_a = check_until(&mut cache, rx_a).unwrap();
         assert!(result_a.ends_with("x"));
@@ -395,5 +403,41 @@ mod tests {
         // the other generators should never generate their files
         assert!(!cache.cache.join("y").exists());
         assert!(!cache.cache.join("z").exists());
+    }
+
+    #[test]
+    fn test_expire_cache_items_after_age_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cache =
+            Cache::from_existing_directory(dir.path().to_path_buf(), 10_000, 100, 3).unwrap();
+        let rx_a = insert_item(&mut cache, "a", "a");
+        let _ = check_until(&mut cache, rx_a).unwrap();
+        thread::sleep(time::Duration::from_secs(2));
+        let rx_b = insert_item(&mut cache, "b", "b");
+        let _ = check_until(&mut cache, rx_b).unwrap();
+        thread::sleep(time::Duration::from_secs(2));
+        cache.cleanup();
+        assert!(cache.get(&"a".into()).is_none());
+        assert!(cache.get(&"b".into()).is_some());
+        thread::sleep(time::Duration::from_secs(2));
+        cache.cleanup();
+        assert!(cache.get(&"a".into()).is_none());
+        assert!(cache.get(&"b".into()).is_none());
+    }
+
+    #[test]
+    fn test_keep_cache_size_below_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cache =
+            Cache::from_existing_directory(dir.path().to_path_buf(), 15, 6, 600).unwrap();
+        for item in vec!["a", "b", "c", "d"] {
+            let rx = insert_item(&mut cache, item, item);
+            let _ = check_until(&mut cache, rx).unwrap();
+        }
+        cache.cleanup();
+        assert!(cache.get(&"a".into()).is_none());
+        assert!(cache.get(&"b".into()).is_none());
+        assert!(cache.get(&"c".into()).is_some());
+        assert!(cache.get(&"d".into()).is_some());
     }
 }

@@ -784,6 +784,7 @@ dependencies = [
  "imageproc",
  "log",
  "reqwest",
+ "ringmap",
  "rocket",
  "serde",
  "serde_json",
@@ -2412,6 +2413,16 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "ringmap"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f59c259b8190b064c82b5b65f764a5710adb897870f1226851130ff0ce23183"
+dependencies = [
+ "equivalent",
+ "hashbrown",
 ]
 
 [[package]]

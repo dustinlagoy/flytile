@@ -62,7 +62,13 @@ pub struct SRTM {
 
 impl SRTM {
     pub fn new(cache_dir: PathBuf) -> Self {
-        let cache = cache::Cache::from_existing_directory(cache_dir.clone()).unwrap();
+        let cache = cache::Cache::from_existing_directory(
+            cache_dir.clone(),
+            10_000_000_000,
+            100_000_000,
+            86400 * 365,
+        )
+        .unwrap();
         let tx = cache::run_cache(cache);
         SRTM {
             cache_dir,

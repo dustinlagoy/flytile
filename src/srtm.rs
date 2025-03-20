@@ -34,10 +34,14 @@ fn redirect_with_auth_and_cookies(
         log::debug!("response status {:?}", response.status());
         log::debug!("response headers {:?}", response.headers());
         log::debug!("response url {:?}", response.url());
-        if response.status() == 200 {
+        if response.status() == reqwest::StatusCode::OK {
             return Ok(response);
         }
-        new_url = response.headers()[reqwest::header::LOCATION]
+        let response = response.error_for_status()?;
+        new_url = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .expect("response did not contain a location")
             .to_str()?
             .to_string();
         let tmp_jar = reqwest::cookie::Jar::default();
@@ -141,7 +145,8 @@ impl SRTM {
 fn download_tile(output_directory: PathBuf, id: &str) -> cache::CacheResult {
     let url = format!(
         "https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/{}.SRTMGL1.hgt.zip",
-        id
+        id.strip_suffix(".hgt")
+            .expect("key did not contain .hgt suffix")
     );
     let zipfile = Path::new("/tmp").join(format!("{}.zip", id));
     log::info!("downloading srtm image {}", id);

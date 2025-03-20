@@ -1,5 +1,7 @@
 use serde_json;
 
+pub type ProcessingResult<T> = std::result::Result<T, ProcessingError>;
+
 #[derive(Debug, Clone)]
 pub struct ProcessingError {
     message: String,

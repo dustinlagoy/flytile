@@ -144,6 +144,9 @@ impl Cache {
     ) -> Result<Self> {
         let mut items = ringmap::RingMap::new();
         log::info!("build cache from {:?}", path);
+        if !path.exists() {
+            fs::create_dir_all(&path)?;
+        }
         let size_bytes = add_all(&path, &Path::new(""), &mut items)?;
         let result = Cache {
             cache: path,
@@ -179,7 +182,7 @@ impl Cache {
                 // execute generator if no one already generating this item
                 log::info!("generate item {:?}", get.key);
                 self.in_progress
-                    .insert(get.key.clone(), thread::spawn(move || generator()));
+                    .insert(get.key.clone(), thread::spawn(generator));
             }
             // add caller to list of askers waiting for result
             log::info!("wait for generating item {:?}", get.key);

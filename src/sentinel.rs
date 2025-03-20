@@ -67,7 +67,10 @@ impl Sentinel {
     }
 
     pub async fn get(&self, zoom: u8, x: u32, y: u32) -> Result<PathBuf> {
-        let key = format!("{}_{}_{}.png", zoom, x, y).into();
+        let key = PathBuf::new()
+            .join(format!("{}", zoom))
+            .join(format!("{}", x))
+            .join(format!("{}.png", y));
         let out_path = self.cache_dir.join(&key);
         let token = self.token_generator.get().await?;
         let generator = move || generate_tile(out_path, zoom, x, y, token);
@@ -88,7 +91,11 @@ fn generate_tile(out_path: PathBuf, zoom: u8, x: u32, y: u32, token: String) -> 
     let (meta, image) = download(request, token)?;
     let date = extract_date(&meta)?;
     let new_image = add_text(&image, &date)?;
-    let mut outfile = fs::File::create(&out_path).unwrap();
+    let parent = out_path.parent().expect("output should have parent dir");
+    if !parent.exists() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut outfile = fs::File::create(&out_path)?;
     outfile.write_all(&new_image)?;
     Ok(out_path)
 }

@@ -16,7 +16,7 @@ fn rocket() -> _ {
         .manage(srtm::SRTM::new(path::Path::new(&cache).join("srtm")))
         .manage(slope::Pipeline::new(path::Path::new(&cache).join("slope")))
         .manage(sentinel::Sentinel::new(
-            path::Path::new("/tmp").join("sentinel"),
+            path::Path::new(&cache).join("sentinel"),
         ))
         .mount("/slope", routes![slope_tiles])
         .mount("/imagery/latest", routes![image_tiles])
@@ -44,7 +44,7 @@ async fn slope_tiles(
     log::debug!("tile bounds {:?}", bounds);
     let elevations = elev.get_all(bounds).await.unwrap();
     log::debug!("elevations {:?}", elevations);
-    let shade = pipe.get(&elevations, zoom, x, y).await.unwrap();
+    let shade = pipe.get(elevations, zoom, x, y).await.unwrap();
     NamedFile::open(&shade).await.ok()
 }
 

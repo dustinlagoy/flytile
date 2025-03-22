@@ -87,7 +87,7 @@ fn generate_tile(out_path: PathBuf, zoom: u8, x: u32, y: u32, token: String) -> 
     let se = tile::square_to_meters(&tile::tile_to_square(zoom, x as f64 + 1.0, y as f64 + 1.0));
     let now = OffsetDateTime::now_utc();
     let before = now - Duration::from_secs(3600 * 24 * 30);
-    let request = format_request(nw.x, se.y, se.x, nw.y, before, now, 15.0);
+    let request = format_request(nw.x, se.y, se.x, nw.y, before, now, 30.0);
     let (meta, image) = download(request, token)?;
     let date = extract_date(&meta)?;
     let new_image = add_text(&image, &date)?;
@@ -132,7 +132,12 @@ fn download(
     log::debug!("response status {:?}", response.status());
     log::debug!("response headers {:?}", response.headers());
     log::debug!("response url {:?}", response.url());
-    response.error_for_status_ref()?;
+    if response.status() != reqwest::StatusCode::OK {
+        return Err(ProcessingError::new(&format!(
+            "http error: {}",
+            response.text()?
+        )));
+    }
 
     let content = Cursor::new(response.bytes()?);
     let mut archive = Archive::new(content);

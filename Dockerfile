@@ -9,11 +9,15 @@ run mkdir src
 run echo "fn main() {}" > src/lib.rs
 run cargo build --release
 copy ./src ./src
+copy ./color.txt ./color.txt
 run touch src/lib.rs
 run cargo install --locked --target-dir target --path . --root /install
 
 from ubuntu:24.04
-run apt-get update && apt-get install -y ca-certificates && apt-get clean
+run apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates gdal-bin && \
+    apt-get clean
 arg install_prefix=/usr/local
 workdir $install_prefix
+copy --from=builder /color.txt ./
 copy --from=builder /install ./

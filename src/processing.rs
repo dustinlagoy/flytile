@@ -22,23 +22,23 @@ impl std::fmt::Display for ProcessingError {
     }
 }
 impl From<std::io::Error> for ProcessingError {
-    fn from(_: std::io::Error) -> Self {
+    fn from(error: std::io::Error) -> Self {
         ProcessingError {
-            message: format!("io"),
+            message: format!("io: {}", error),
         }
     }
 }
 impl From<std::env::VarError> for ProcessingError {
-    fn from(_: std::env::VarError) -> Self {
+    fn from(error: std::env::VarError) -> Self {
         ProcessingError {
-            message: format!("env"),
+            message: format!("env: {}", error),
         }
     }
 }
 impl From<serde_json::Error> for ProcessingError {
-    fn from(_: serde_json::Error) -> Self {
+    fn from(error: serde_json::Error) -> Self {
         ProcessingError {
-            message: format!("serde"),
+            message: format!("serde: {}", error),
         }
     }
 }
@@ -50,16 +50,16 @@ impl From<reqwest::Error> for ProcessingError {
     }
 }
 impl From<image::ImageError> for ProcessingError {
-    fn from(_: image::ImageError) -> Self {
+    fn from(error: image::ImageError) -> Self {
         ProcessingError {
-            message: format!("image"),
+            message: format!("image: {}", error),
         }
     }
 }
 impl From<ab_glyph::InvalidFont> for ProcessingError {
-    fn from(_: ab_glyph::InvalidFont) -> Self {
+    fn from(error: ab_glyph::InvalidFont) -> Self {
         ProcessingError {
-            message: format!("io"),
+            message: format!("font: {}", error),
         }
     }
 }

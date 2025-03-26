@@ -158,7 +158,12 @@ impl Cache {
             in_progress: collections::HashMap::new(),
             to_return: collections::HashMap::new(),
         };
-        log::debug!("generated cache: {:?}", result);
+        log::info!(
+            "built cache from: {:?} of {} items and {} bytes",
+            result.cache,
+            result.items.len(),
+            result.size_bytes
+        );
         Ok(result)
     }
 
@@ -235,6 +240,7 @@ impl Cache {
     /// removes up to step_bytes worth of items to avoid thrashing
     fn shrink(&mut self) {
         if self.size_bytes > self.max_size_bytes {
+            log::debug!("shrink {} {}", self.size_bytes, self.max_size_bytes);
             while self.size_bytes > self.max_size_bytes - self.shrink_step_bytes {
                 self.remove_oldest();
             }
@@ -259,7 +265,12 @@ impl Cache {
     fn remove_oldest(&mut self) {
         // TODO remove unwraps
         let (key, entry) = self.items.pop_front().unwrap();
-        log::debug!("removing cache item {:?}", key);
+        log::debug!(
+            "removing cache item {:?} of size {} (total {})",
+            key,
+            entry.bytes
+            self.size_bytes,
+        );
         self.size_bytes -= entry.bytes;
         std::fs::remove_file(entry.path).unwrap();
     }
@@ -275,7 +286,7 @@ fn add_all(
         let entry = maybe_entry?;
         let entry_path = entry.path();
         if entry_path.is_dir() {
-            add_all(cache, &entry_path.strip_prefix(cache)?, items)?;
+            size += add_all(cache, &entry_path.strip_prefix(cache)?, items)?;
         } else {
             let key = entry_path.strip_prefix(cache)?;
             let metadata = entry.metadata()?;

@@ -268,7 +268,7 @@ impl Cache {
         log::debug!(
             "removing cache item {:?} of size {} (total {})",
             key,
-            entry.bytes
+            entry.bytes,
             self.size_bytes,
         );
         self.size_bytes -= entry.bytes;

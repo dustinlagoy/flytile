@@ -11,3 +11,4 @@ pub mod slope;
 pub mod srtm;
 pub mod tile;
 pub mod token;
+pub mod viewer;

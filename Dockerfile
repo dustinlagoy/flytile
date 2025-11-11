@@ -21,3 +21,5 @@ arg install_prefix=/usr/local
 workdir $install_prefix
 copy --from=builder /color.txt ./
 copy --from=builder /install ./
+run mkdir css
+copy ./style.css ./css/

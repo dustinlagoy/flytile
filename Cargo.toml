@@ -15,6 +15,7 @@ env_logger = "0.11.6"
 image = "0.25.5"
 imageproc = "0.25.0"
 log = "0.4.26"
+maud = { version = "0.27.0", features = ["rocket"] }
 reqwest = { version = "0.12.12", features = ["blocking", "cookies", "multipart", "json"] }
 ringmap = "0.1.2"
 rocket = "0.5.1"

@@ -1,0 +1,159 @@
+body {
+  width: 2304px;
+  font-family: Arial, sans-serif;
+  color: #553f3f;
+  background-color: #ffe9e9;
+  margin: 0 auto;
+}
+
+h1 {
+  text-align: center;
+}
+
+button {
+  width: 96px;
+  border-width: 0px;
+  background-color: #ffbfbf;
+}
+
+.viewgrid {
+  display: grid;
+  grid-template-columns: 256px 256px 256px 256px 256px 256px 256px 256px 256px;
+  grid-auto-rows: 256px;
+}
+
+@media screen and (max-width: 2304px) {
+body {width: 1792px;}
+.viewgrid {
+  grid-template-areas:
+    "vi-2-3 vi-2-2 vi-2-1 vi-200 vi-201 vi-202 vi-203"
+    "vi-1-3 vi-1-2 vi-1-1 vi-100 vi-101 vi-102 vi-103"
+    "vi00-3 vi00-2 vi00-1 vi0000 vi0001 vi0002 vi0003"
+    "vi01-3 vi01-2 vi01-1 vi0100 vi0101 vi0102 vi0103"
+    "vi02-3 vi02-2 vi02-1 vi0200 vi0201 vi0202 vi0203";
+  grid-template-columns: 256px 256px 256px 256px 256px 256px 256px;
+}
+.vi-2-4 {display: none;}
+.vi-204 {display: none;}
+.vi-1-4 {display: none;}
+.vi-104 {display: none;}
+.vi00-4 {display: none;}
+.vi0004 {display: none;}
+.vi01-4 {display: none;}
+.vi0104 {display: none;}
+.vi02-4 {display: none;}
+.vi0204 {display: none;}
+}
+
+@media screen and (max-width: 1792px) {
+body {width: 1280px;}
+.viewgrid {
+  grid-template-areas:
+    "vi-2-2 vi-2-1 vi-200 vi-201 vi-202"
+    "vi-1-2 vi-1-1 vi-100 vi-101 vi-102"
+    "vi00-2 vi00-1 vi0000 vi0001 vi0002"
+    "vi01-2 vi01-1 vi0100 vi0101 vi0102"
+    "vi02-2 vi02-1 vi0200 vi0201 vi0202";
+  grid-template-columns: 256px 256px 256px 256px 256px;
+}
+.vi-2-4 {display: none;}
+.vi-2-3 {display: none;}
+.vi-203 {display: none;}
+.vi-204 {display: none;}
+.vi-1-4 {display: none;}
+.vi-1-3 {display: none;}
+.vi-103 {display: none;}
+.vi-104 {display: none;}
+.vi00-4 {display: none;}
+.vi00-3 {display: none;}
+.vi0003 {display: none;}
+.vi0004 {display: none;}
+.vi01-4 {display: none;}
+.vi01-3 {display: none;}
+.vi0103 {display: none;}
+.vi0104 {display: none;}
+.vi02-4 {display: none;}
+.vi02-3 {display: none;}
+.vi0203 {display: none;}
+.vi0204 {display: none;}
+}
+
+@media screen and (max-width: 1280px) {
+body {width: 768px;}
+.viewgrid {
+  grid-template-areas:
+    "vi-2-1 vi-200 vi-201"
+    "vi-1-1 vi-100 vi-101"
+    "vi00-1 vi0000 vi0001"
+    "vi01-1 vi0100 vi0101"
+    "vi02-1 vi0200 vi0201";
+  grid-template-columns: 256px 256px 256px;
+}
+.vi-2-4 {display: none;}
+.vi-2-3 {display: none;}
+.vi-2-2 {display: none;}
+.vi-202 {display: none;}
+.vi-203 {display: none;}
+.vi-204 {display: none;}
+
+.vi-1-4 {display: none;}
+.vi-1-3 {display: none;}
+.vi-1-2 {display: none;}
+.vi-102 {display: none;}
+.vi-103 {display: none;}
+.vi-104 {display: none;}
+
+.vi00-4 {display: none;}
+.vi00-3 {display: none;}
+.vi00-2 {display: none;}
+.vi0002 {display: none;}
+.vi0003 {display: none;}
+.vi0004 {display: none;}
+
+.vi01-4 {display: none;}
+.vi01-3 {display: none;}
+.vi01-2 {display: none;}
+.vi0102 {display: none;}
+.vi0103 {display: none;}
+.vi0104 {display: none;}
+
+.vi02-4 {display: none;}
+.vi02-3 {display: none;}
+.vi02-2 {display: none;}
+.vi0202 {display: none;}
+.vi0203 {display: none;}
+.vi0204 {display: none;}
+}
+
+@media screen and (max-height: 1280px) {
+.vi-2-4 {display: none;}
+.vi-2-3 {display: none;}
+.vi-2-2 {display: none;}
+.vi-2-1 {display: none;}
+.vi-200 {display: none;}
+.vi-201 {display: none;}
+.vi-202 {display: none;}
+.vi-203 {display: none;}
+.vi-204 {display: none;}
+}
+
+@media screen and (max-height: 1024px) {
+.vi-2-4 {display: none;}
+.vi-2-3 {display: none;}
+.vi-2-2 {display: none;}
+.vi-2-1 {display: none;}
+.vi-200 {display: none;}
+.vi-201 {display: none;}
+.vi-202 {display: none;}
+.vi-203 {display: none;}
+.vi-204 {display: none;}
+.vi02-4 {display: none;}
+.vi02-3 {display: none;}
+.vi02-2 {display: none;}
+.vi02-1 {display: none;}
+.vi0200 {display: none;}
+.vi0201 {display: none;}
+.vi0202 {display: none;}
+.vi0203 {display: none;}
+.vi0204 {display: none;}
+}

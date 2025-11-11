@@ -7,7 +7,7 @@ use image::ImageFormat;
 use image::ImageReader;
 use image::Rgba;
 use imageproc::drawing::draw_text_mut;
-use reqwest::header::{ACCEPT, AUTHORIZATION};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde_json;
 use std::env;
 use std::fs;
@@ -109,21 +109,19 @@ fn extract_date(meta: &str) -> std::result::Result<String, ProcessingError> {
 }
 
 fn download(
-    request: String,
+    json_body: String,
     token: String,
 ) -> std::result::Result<(String, Vec<u8>), ProcessingError> {
     log::debug!("sentinel download request {}", request);
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(180))
         .build()?;
-    let form = reqwest::blocking::multipart::Form::new()
-        .text("request", request)
-        .text("evalscript", IMAGE_SCRIPT);
     let to_send = client
         .post(URL)
         .header(AUTHORIZATION, format!("Bearer {}", token))
         .header(ACCEPT, "application/tar")
-        .multipart(form)
+        .header(CONTENT_TYPE, "application/json")
+        .body(json_body)
         .build()?;
 
     log::debug!("send headers {:?}", to_send.headers());
@@ -133,10 +131,9 @@ fn download(
     log::debug!("response headers {:?}", response.headers());
     log::debug!("response url {:?}", response.url());
     if response.status() != reqwest::StatusCode::OK {
-        return Err(ProcessingError::new(&format!(
-            "http error: {}",
-            response.text()?
-        )));
+        let text = response.text()?;
+        log::debug!("response text {}", text);
+        return Err(ProcessingError::new(&format!("http error: {}", text)));
     }
 
     let content = Cursor::new(response.bytes()?);
@@ -232,10 +229,12 @@ fn format_request(
                 }}
             }}
         ]
-    }}
+    }},
+    "evalscript": "{script}"
 }}"#,
         start_time = start_time.format(&formatter).unwrap(),
-        end_time = end_time.format(&formatter).unwrap()
+        end_time = end_time.format(&formatter).unwrap(),
+        script = IMAGE_SCRIPT.replace(r#"""#, r#"\""#).replace("\n", "\\n")
     );
 }
 
